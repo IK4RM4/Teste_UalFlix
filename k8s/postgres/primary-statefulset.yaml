@@ -3,34 +3,87 @@ kind: StatefulSet
 metadata:
   name: postgres-primary
   namespace: ualflix
+  labels:
+    app: postgres-primary
+    component: database
+    role: primary
 spec:
   serviceName: postgres-primary-service
   replicas: 1
   selector:
     matchLabels:
       app: postgres-primary
+      role: primary
   template:
     metadata:
       labels:
         app: postgres-primary
+        component: database
+        role: primary
     spec:
       containers:
       - name: postgres
         image: postgres:13
         ports:
         - containerPort: 5432
-        envFrom:
-        - configMapRef:
-            name: postgres-config
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "ualflix"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          value: "password"
+        - name: POSTGRES_HOST_AUTH_METHOD
+          value: "trust"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1"
         volumeMounts:
         - name: postgres-storage
           mountPath: /var/lib/postgresql/data
         - name: init-sql
           mountPath: /docker-entrypoint-initdb.d
+        - name: postgres-config
+          mountPath: /etc/postgresql/postgresql.conf
+          subPath: postgresql.conf
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+            - -d
+            - ualflix
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+            - -d
+            - ualflix
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
       volumes:
       - name: init-sql
         configMap:
           name: postgres-init
+      - name: postgres-config
+        configMap:
+          name: postgres-config-primary
   volumeClaimTemplates:
   - metadata:
       name: postgres-storage
@@ -38,17 +91,4 @@ spec:
       accessModes: ["ReadWriteOnce"]
       resources:
         requests:
-          storage: 2Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: postgres-primary-service
-  namespace: ualflix
-spec:
-  selector:
-    app: postgres-primary
-  ports:
-  - port: 5432
-    targetPort: 5432
-  clusterIP: None
+          storage: 5Gi

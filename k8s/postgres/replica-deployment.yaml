@@ -1,37 +1,100 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: ualflix
   name: postgres-replica
+  namespace: ualflix
+  labels:
+    app: postgres-replica
+    component: database
+    role: replica
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: postgres-replica
+      role: replica
   template:
     metadata:
-  namespace: ualflix
       labels:
         app: postgres-replica
+        component: database
+        role: replica
     spec:
+      initContainers:
+      - name: pg-basebackup
+        image: postgres:13
+        command:
+        - bash
+        - -c
+        - |
+          # Aguardar primary estar disponível
+          until pg_isready -h postgres-primary-service -U postgres; do
+            echo "Aguardando primary database..."
+            sleep 2
+          done
+          
+          # Fazer backup do primary se não existir dados
+          if [ ! -f /var/lib/postgresql/data/PG_VERSION ]; then
+            echo "Fazendo backup do primary..."
+            pg_basebackup -h postgres-primary-service -D /var/lib/postgresql/data -U postgres -v -P -R
+            echo "standby_mode = 'on'" >> /var/lib/postgresql/data/recovery.conf
+            echo "primary_conninfo = 'host=postgres-primary-service port=5432 user=postgres'" >> /var/lib/postgresql/data/recovery.conf
+            touch /var/lib/postgresql/data/standby.signal
+          fi
+        volumeMounts:
+        - name: postgres-replica-storage
+          mountPath: /var/lib/postgresql/data
+        env:
+        - name: PGPASSWORD
+          value: "password"
       containers:
-        - name: postgres
-          image: postgres:13
-          ports:
-            - containerPort: 5432
-          envFrom:
-            - configMapRef:
-                name: postgres-config
-          command: ["bash", "-c"]
-          args:
-            - |
-              until pg_basebackup -h postgres-primary -D /var/lib/postgresql/data -U user -Fp -Xs -P -R; do
-                sleep 1;
-              done;
-              exec postgres
-          volumeMounts:
-            - name: postgres-storage
-              mountPath: /var/lib/postgresql/data
+      - name: postgres
+        image: postgres:13
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: POSTGRES_DB
+          value: "ualflix"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_PASSWORD
+          value: "password"
+        - name: POSTGRES_HOST_AUTH_METHOD
+          value: "trust"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: postgres-replica-storage
+          mountPath: /var/lib/postgresql/data
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - postgres
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
       volumes:
-        - name: postgres-storage
-          emptyDir: {}
+      - name: postgres-replica-storage
+        emptyDir: {}
+      restartPolicy: Always

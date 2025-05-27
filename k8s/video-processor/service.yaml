@@ -1,12 +1,17 @@
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: ualflix
   name: video-processor-service
+  namespace: ualflix
+  labels:
+    app: video-processor
+    component: worker
 spec:
   selector:
     app: video-processor
   ports:
-    - port: 80
-      targetPort: 5003
+    - name: http
+      port: 80
+      targetPort: 8000
+      protocol: TCP
   type: ClusterIP

@@ -1,21 +1,63 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: ualflix
   name: streaming-deployment
+  namespace: ualflix
+  labels:
+    app: streaming
+    component: backend
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: streaming
   template:
     metadata:
-  namespace: ualflix
       labels:
         app: streaming
+        component: backend
     spec:
       containers:
         - name: streaming
-          image: ik4rm4/streaming_service:latest
+          image: streaming_service:latest
+          imagePullPolicy: Never
           ports:
-            - containerPort: 5001
+            - containerPort: 8001
+              name: http
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          volumeMounts:
+            - name: video-storage
+              mountPath: /videos
+              readOnly: true  # Streaming só precisa ler
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+      volumes:
+        - name: video-storage
+          persistentVolumeClaim:
+            claimName: video-storage-pvc
+      restartPolicy: Always

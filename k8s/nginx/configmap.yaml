@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: ualflix
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+        limit_req_zone $binary_remote_addr zone=upload:10m rate=1r/s;
+        
+        # Upstreams para load balancing
+        upstream frontend {
+            server frontend-service:80 max_fails=3 fail_timeout=30s;
+        }
+        
+        upstream catalog {
+            server catalog-service:80 max_fails=3 fail_timeout=30s;
+        }
+        
+        upstream auth {
+            server auth-service:80 max_fails=3 fail_timeout=30s;
+        }
+        
+        upstream streaming {
+            server streaming-service:80 max_fails=3 fail_timeout=30s;
+        }
+        
+        upstream admin {
+            server admin-service:80 max_fails=3 fail_timeout=30s;
+        }
+        
+        # Server principal
+        server {
+            listen 80;
+            server_name _;
+            client_max_body_size 1024M;
+            
+            # Headers de segurança
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-XSS-Protection "1; mode=block" always;
+            
+            # Frontend React
+            location / {
+                proxy_pass http://frontend;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection 'upgrade';
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_cache_bypass $http_upgrade;
+            }
+            
+            # API de Autenticação
+            location /api/auth/ {
+                limit_req zone=api burst=20 nodelay;
+                rewrite ^/api/auth(/.*)$ $1 break;
+                proxy_pass http://auth;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_connect_timeout 30s;
+                proxy_send_timeout 30s;
+                proxy_read_timeout 30s;
+            }
+            
+            # API de Administração
+            location /api/admin/ {
+                limit_req zone=api burst=10 nodelay;
+                rewrite ^/api/admin(/.*)$ /api/admin$1 break;
+                proxy_pass http://admin;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_connect_timeout 30s;
+                proxy_send_timeout 60s;
+                proxy_read_timeout 60s;
+            }
+            
+            # API do Catálogo (inclui uploads)
+            location /api/ {
+                # Rate limiting mais restritivo para uploads
+                if ($request_method = POST) {
+                    limit_req zone=upload burst=5 nodelay;
+                }
+                if ($request_method = GET) {
+                    limit_req zone=api burst=50 nodelay;
+                }
+                
+                rewrite ^/api(/.*)$ $1 break;
+                proxy_pass http://catalog;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                
+                # Timeouts maiores para uploads
+                proxy_connect_timeout 60s;
+                proxy_send_timeout 300s;
+                proxy_read_timeout 300s;
+                proxy_request_buffering off;
+            }
+            
+            # Streaming de vídeos
+            location /stream/ {
+                proxy_pass http://streaming/stream/;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header Range $http_range;
+                proxy_set_header If-Range $http_if_range;
+                
+                # Configurações específicas para streaming
+                proxy_buffering off;
+                proxy_cache off;
+                proxy_no_cache 1;
+                proxy_cache_bypass 1;
+                
+                # Headers CORS para vídeos
+                add_header Access-Control-Allow-Origin *;
+                add_header Access-Control-Allow-Methods 'GET, OPTIONS';
+                add_header Access-Control-Allow-Headers 'Range';
+                add_header Access-Control-Expose-Headers 'Content-Length,Content-Range';
+            }
+            
+            # Health check
+            location /health {
+                access_log off;
+                return 200 "healthy\n";
+                add_header Content-Type text/plain;
+            }
+            
+            # Prometheus metrics
+            location /metrics {
+                access_log off;
+                return 200 "# TYPE nginx_up gauge\nnginx_up 1\n";
+                add_header Content-Type text/plain;
+            }
+        }
+    }

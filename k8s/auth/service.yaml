@@ -1,12 +1,18 @@
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: ualflix
   name: auth-service
+  namespace: ualflix
+  labels:
+    app: auth
+    component: backend
 spec:
   selector:
     app: auth
   ports:
-    - port: 80
+    - name: http
+      port: 80
       targetPort: 8000
+      protocol: TCP
   type: ClusterIP
+  sessionAffinity: None

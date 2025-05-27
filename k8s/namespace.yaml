@@ -1,5 +1,49 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  namespace: ualflix
   name: ualflix
+  labels:
+    name: ualflix
+    app: ualflix-system
+    version: "1.0"
+---
+# Configuração de recursos por namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: ualflix-quota
+  namespace: ualflix
+spec:
+  hard:
+    requests.cpu: "4"
+    requests.memory: 8Gi
+    limits.cpu: "8" 
+    limits.memory: 16Gi
+    persistentvolumeclaims: "10"
+    services: "20"
+    secrets: "10"
+---
+# Network Policy para segurança
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ualflix-network-policy
+  namespace: ualflix
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ualflix
+    - podSelector: {}
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: ualflix
+    - podSelector: {}
+  - to: [] # Allow external traffic

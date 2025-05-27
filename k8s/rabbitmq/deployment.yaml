@@ -3,6 +3,9 @@ kind: Deployment
 metadata:
   name: rabbitmq
   namespace: ualflix
+  labels:
+    app: rabbitmq
+    component: messaging
 spec:
   replicas: 1
   selector:
@@ -12,31 +15,56 @@ spec:
     metadata:
       labels:
         app: rabbitmq
+        component: messaging
     spec:
       containers:
       - name: rabbitmq
         image: rabbitmq:3-management
         ports:
         - containerPort: 5672
+          name: amqp
         - containerPort: 15672
+          name: management
+        - containerPort: 15692
+          name: prometheus
         env:
         - name: RABBITMQ_DEFAULT_USER
           value: "ualflix"
         - name: RABBITMQ_DEFAULT_PASS
           value: "ualflix_password"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: rabbitmq-service
-  namespace: ualflix
-spec:
-  selector:
-    app: rabbitmq
-  ports:
-  - name: amqp
-    port: 5672
-    targetPort: 5672
-  - name: management
-    port: 15672
-    targetPort: 15672
+        - name: RABBITMQ_ENABLED_PLUGINS_FILE
+          value: "/etc/rabbitmq/enabled_plugins"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        command:
+        - bash
+        - -c
+        - |
+          echo '[rabbitmq_management,rabbitmq_prometheus].' > /etc/rabbitmq/enabled_plugins
+          rabbitmq-server
+        livenessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - -q
+            - ping
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - -q
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 2
+      restartPolicy: Always

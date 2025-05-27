@@ -3,9 +3,14 @@ kind: PersistentVolumeClaim
 metadata:
   name: video-storage-pvc
   namespace: ualflix
+  labels:
+    app: ualflix
+    component: storage
+    type: video-files
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany  # Múltiplos pods precisam acessar os vídeos
   resources:
     requests:
-      storage: 5Gi
+      storage: 10Gi  # Aumentado para 10GB
+  storageClassName: standard  # Use a storage class disponível no seu cluster
