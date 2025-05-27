@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: default
+  labels:
+    app: nginx
+
+data:
+  nginx.conf: |
+    events {}
+    http {
+      upstream catalog {
+        server catalog-service:80;
+      }
+      upstream auth {
+        server auth-service:80;
+      }
+      upstream stream {
+        server streaming-service:80;
+      }
+      upstream frontend {
+        server frontend-service:80;
+      }
+
+      server {
+        listen 80;
+
+        location /catalog/ {
+          proxy_pass http://catalog;
+        }
+
+        location /auth/ {
+          proxy_pass http://auth;
+        }
+
+        location /stream/ {
+          proxy_pass http://stream;
+        }
+
+        location / {
+          proxy_pass http://frontend;
+        }
+      }
+    }
