@@ -1,316 +1,370 @@
 #!/usr/bin/env python3
 """
-Database Manager Service - Gestão de Replicação Master-Slave
+MongoDB Database Manager - Gestão de Replica Set e Replicação
+FUNCIONALIDADE 5: Estratégias de Replicação de Dados (MongoDB)
+FUNCIONALIDADE 2: Implementação de Cluster (MongoDB Replica Set)
 """
 
-from flask import Flask, jsonify, request
-import psycopg2
+from pymongo import MongoClient, ReadPreference, WriteConcern
+from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
+import os
 import logging
 import time
-import threading
+from functools import wraps
 from datetime import datetime
+import threading
+from bson import ObjectId
 
-app = Flask(__name__)
+# Configuração de logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class DatabaseManager:
+class MongoDBManager:
+    """Gerenciador de conexões MongoDB com suporte a Replica Set"""
+    
     def __init__(self):
-        self.master_config = {
-            'host': 'ualflix_db_master',
-            'port': 5432,
-            'database': 'ualflix',
-            'user': 'postgres',
-            'password': 'password'
+        self.primary_config = {
+            'host': os.environ.get('MONGODB_PRIMARY_HOST', 'ualflix_db_primary'),
+            'port': int(os.environ.get('MONGODB_PRIMARY_PORT', '27017')),
+            'username': os.environ.get('MONGODB_USERNAME', 'admin'),
+            'password': os.environ.get('MONGODB_PASSWORD', 'password'),
+            'database': os.environ.get('MONGODB_DATABASE', 'ualflix'),
+            'replica_set': os.environ.get('MONGODB_REPLICA_SET', 'ualflix-replica-set')
         }
         
-        self.slave_config = {
-            'host': 'ualflix_db_slave',
-            'port': 5432,
-            'database': 'ualflix',
-            'user': 'postgres',
-            'password': 'password'
+        self.secondary_config = {
+            'host': os.environ.get('MONGODB_SECONDARY_HOST', 'ualflix_db_secondary'),
+            'port': int(os.environ.get('MONGODB_SECONDARY_PORT', '27018')),
+            'username': os.environ.get('MONGODB_USERNAME', 'admin'),
+            'password': os.environ.get('MONGODB_PASSWORD', 'password'),
+            'database': os.environ.get('MONGODB_DATABASE', 'ualflix'),
+            'replica_set': os.environ.get('MONGODB_REPLICA_SET', 'ualflix-replica-set')
         }
         
-        self.loadbalancer_config = {
-            'host': 'ualflix_db_loadbalancer',
-            'port': 5432,
-            'database': 'ualflix',
-            'user': 'postgres',
-            'password': 'password'
-        }
+        # Clients para diferentes tipos de operações
+        self.write_client = None
+        self.read_client = None
+        self.replica_set_client = None
         
-    def get_connection(self, config, readonly=False):
-        """Obter conexão com a base de dados"""
-        try:
-            conn = psycopg2.connect(**config)
-            if readonly:
-                conn.set_session(readonly=True)
-            return conn
-        except Exception as e:
-            logger.error(f"Erro ao conectar à BD: {e}")
-            return None
+        self._initialize_connections()
     
-    def check_master_status(self):
-        """Verificar status do master"""
+    def _build_connection_uri(self, config, read_preference=None):
+        """Constrói URI de conexão MongoDB"""
+        uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+        
+        params = []
+        if config.get('replica_set'):
+            params.append(f"replicaSet={config['replica_set']}")
+        
+        if read_preference:
+            params.append(f"readPreference={read_preference}")
+        
+        params.append("authSource=admin")
+        
+        if params:
+            uri += "?" + "&".join(params)
+        
+        return uri
+    
+    def _initialize_connections(self):
+        """Inicializa as conexões MongoDB"""
         try:
-            conn = self.get_connection(self.master_config)
-            if not conn:
-                return {"status": "error", "message": "Cannot connect to master"}
+            # Cliente para escritas (PRIMARY)
+            write_uri = self._build_connection_uri(self.primary_config)
+            self.write_client = MongoClient(
+                write_uri,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                w='majority',  # Write concern
+                j=True,        # Journal
+                readPreference='primary'
+            )
             
-            cursor = conn.cursor()
+            # Cliente para leituras (SECONDARY PREFERRED)
+            read_uri = self._build_connection_uri(self.secondary_config, 'secondaryPreferred')
+            self.read_client = MongoClient(
+                read_uri,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000,
+                readPreference='secondaryPreferred'
+            )
             
-            # Verificar se é master
-            cursor.execute("SELECT pg_is_in_recovery();")
-            is_in_recovery = cursor.fetchone()[0]
+            # Cliente para replica set completo
+            replica_hosts = f"{self.primary_config['host']}:{self.primary_config['port']},{self.secondary_config['host']}:{self.secondary_config['port']}"
+            replica_uri = f"mongodb://{self.primary_config['username']}:{self.primary_config['password']}@{replica_hosts}/{self.primary_config['database']}?replicaSet={self.primary_config['replica_set']}&authSource=admin"
             
-            # Obter informações de replicação
-            cursor.execute("""
-                SELECT 
-                    application_name,
-                    client_addr,
-                    state,
-                    sent_lsn,
-                    write_lsn,
-                    flush_lsn,
-                    replay_lsn,
-                    sync_state
-                FROM pg_stat_replication;
-            """)
-            replication_info = cursor.fetchall()
+            self.replica_set_client = MongoClient(
+                replica_uri,
+                serverSelectionTimeoutMS=10000,
+                connectTimeoutMS=10000
+            )
             
-            conn.close()
+            logger.info("✅ Conexões MongoDB inicializadas")
+            self._test_connections()
+            
+        except Exception as e:
+            logger.error(f"❌ Erro ao inicializar conexões MongoDB: {e}")
+            raise
+    
+    def _test_connections(self):
+        """Testa as conexões MongoDB"""
+        try:
+            # Test write connection
+            self.write_client.admin.command('ping')
+            logger.info("✅ Conexão de escrita (PRIMARY) OK")
+            
+            # Test read connection
+            self.read_client.admin.command('ping')
+            logger.info("✅ Conexão de leitura (SECONDARY) OK")
+            
+            # Test replica set
+            self.replica_set_client.admin.command('ping')
+            logger.info("✅ Conexão Replica Set OK")
+            
+        except Exception as e:
+            logger.warning(f"⚠️ Teste de conexão falhou: {e}")
+    
+    def get_write_database(self):
+        """Retorna database para operações de escrita (PRIMARY)"""
+        if not self.write_client:
+            self._initialize_connections()
+        return self.write_client[self.primary_config['database']]
+    
+    def get_read_database(self):
+        """Retorna database para operações de leitura (SECONDARY PREFERRED)"""
+        if not self.read_client:
+            self._initialize_connections()
+        return self.read_client[self.secondary_config['database']]
+    
+    def get_replica_database(self):
+        """Retorna database com acesso ao replica set completo"""
+        if not self.replica_set_client:
+            self._initialize_connections()
+        return self.replica_set_client[self.primary_config['database']]
+    
+    def check_replica_set_status(self):
+        """Verifica status do replica set"""
+        try:
+            db = self.get_replica_database()
+            status = db.command('replSetGetStatus')
+            
+            members = []
+            for member in status.get('members', []):
+                members.append({
+                    'name': member.get('name'),
+                    'state': member.get('stateStr'),
+                    'health': member.get('health'),
+                    'is_primary': member.get('stateStr') == 'PRIMARY',
+                    'is_secondary': member.get('stateStr') == 'SECONDARY',
+                    'is_arbiter': member.get('stateStr') == 'ARBITER',
+                    'last_heartbeat': member.get('lastHeartbeat'),
+                    'ping_ms': member.get('pingMs', 0)
+                })
             
             return {
-                "status": "active",
-                "is_master": not is_in_recovery,
-                "replication_slaves": len(replication_info),
-                "slaves_info": [
-                    {
-                        "application_name": row[0],
-                        "client_addr": str(row[1]) if row[1] else None,
-                        "state": row[2],
-                        "sync_state": row[7]
-                    } for row in replication_info
-                ]
+                'set_name': status.get('set'),
+                'date': status.get('date'),
+                'primary_name': next((m['name'] for m in members if m['is_primary']), None),
+                'members': members,
+                'status': 'healthy' if len([m for m in members if m['health'] == 1]) >= 2 else 'degraded'
             }
             
         except Exception as e:
-            logger.error(f"Erro ao verificar master: {e}")
-            return {"status": "error", "message": str(e)}
-    
-    def check_slave_status(self):
-        """Verificar status do slave"""
-        try:
-            conn = self.get_connection(self.slave_config)
-            if not conn:
-                return {"status": "error", "message": "Cannot connect to slave"}
-            
-            cursor = conn.cursor()
-            
-            # Verificar se é slave
-            cursor.execute("SELECT pg_is_in_recovery();")
-            is_in_recovery = cursor.fetchone()[0]
-            
-            # Obter informações de WAL receiver
-            cursor.execute("""
-                SELECT 
-                    status,
-                    receive_start_lsn,
-                    receive_start_tli,
-                    received_lsn,
-                    received_tli,
-                    last_msg_send_time,
-                    last_msg_receipt_time,
-                    latest_end_lsn,
-                    latest_end_time
-                FROM pg_stat_wal_receiver;
-            """)
-            wal_receiver_info = cursor.fetchone()
-            
-            conn.close()
-            
-            return {
-                "status": "active",
-                "is_slave": is_in_recovery,
-                "wal_receiver_status": wal_receiver_info[0] if wal_receiver_info else None,
-                "last_received": str(wal_receiver_info[6]) if wal_receiver_info and wal_receiver_info[6] else None
-            }
-            
-        except Exception as e:
-            logger.error(f"Erro ao verificar slave: {e}")
-            return {"status": "error", "message": str(e)}
+            logger.error(f"Erro ao verificar status do replica set: {e}")
+            return {'status': 'error', 'error': str(e)}
     
     def test_replication_lag(self):
-        """Testar lag de replicação"""
+        """Testa lag de replicação"""
         try:
-            # Inserir dados no master
-            master_conn = self.get_connection(self.master_config)
-            if not master_conn:
-                return {"error": "Cannot connect to master"}
+            # Escrever no primary
+            write_db = self.get_write_database()
+            test_doc = {
+                'test_time': datetime.utcnow(),
+                'test_data': f'Replication test {int(time.time())}',
+                'type': 'replication_test'
+            }
             
-            cursor = master_conn.cursor()
-            test_time = datetime.now()
+            result = write_db.replication_test.insert_one(test_doc)
+            test_id = result.inserted_id
             
-            cursor.execute("""
-                INSERT INTO replication_test (test_time, test_data) 
-                VALUES (%s, %s) RETURNING id;
-            """, (test_time, f"Test data {test_time}"))
+            # Aguardar um pouco
+            time.sleep(1)
             
-            test_id = cursor.fetchone()[0]
-            master_conn.commit()
-            master_conn.close()
+            # Ler do secondary
+            read_db = self.get_read_database()
+            found_doc = read_db.replication_test.find_one({'_id': test_id})
             
-            # Aguardar um pouco para replicação
-            time.sleep(2)
-            
-            # Verificar no slave
-            slave_conn = self.get_connection(self.slave_config, readonly=True)
-            if not slave_conn:
-                return {"error": "Cannot connect to slave"}
-            
-            cursor = slave_conn.cursor()
-            cursor.execute("""
-                SELECT test_time, test_data 
-                FROM replication_test 
-                WHERE id = %s;
-            """, (test_id,))
-            
-            result = cursor.fetchone()
-            slave_conn.close()
-            
-            if result:
-                lag_seconds = (datetime.now() - result[0]).total_seconds()
+            if found_doc:
+                lag_seconds = (datetime.utcnow() - found_doc['test_time']).total_seconds()
+                
+                # Limpar teste
+                write_db.replication_test.delete_one({'_id': test_id})
+                
                 return {
-                    "replication_working": True,
-                    "lag_seconds": lag_seconds,
-                    "test_id": test_id
+                    'replication_working': True,
+                    'lag_seconds': lag_seconds,
+                    'test_id': str(test_id)
                 }
             else:
                 return {
-                    "replication_working": False,
-                    "message": "Data not found in slave"
+                    'replication_working': False,
+                    'message': 'Document not found on secondary'
                 }
                 
         except Exception as e:
             logger.error(f"Erro no teste de replicação: {e}")
-            return {"error": str(e)}
+            return {'error': str(e)}
     
     def get_database_metrics(self):
-        """Obter métricas das bases de dados"""
+        """Obtém métricas das bases de dados"""
         metrics = {}
         
-        # Métricas do Master
         try:
-            conn = self.get_connection(self.master_config)
-            if conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT 
-                        (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') as active_connections,
-                        (SELECT count(*) FROM videos) as total_videos,
-                        (SELECT count(*) FROM users) as total_users,
-                        (SELECT sum(view_count) FROM videos) as total_views;
-                """)
-                result = cursor.fetchone()
-                metrics['master'] = {
-                    'active_connections': result[0],
-                    'total_videos': result[1],
-                    'total_users': result[2],
-                    'total_views': result[3]
-                }
-                conn.close()
+            # Primary metrics
+            write_db = self.get_write_database()
+            
+            # Estatísticas gerais
+            stats = write_db.command('dbStats')
+            
+            # Contagens das coleções
+            users_count = write_db.users.count_documents({})
+            videos_count = write_db.videos.count_documents({})
+            views_count = write_db.video_views.count_documents({})
+            
+            metrics['primary'] = {
+                'data_size_mb': round(stats.get('dataSize', 0) / (1024 * 1024), 2),
+                'storage_size_mb': round(stats.get('storageSize', 0) / (1024 * 1024), 2),
+                'index_size_mb': round(stats.get('indexSize', 0) / (1024 * 1024), 2),
+                'collections': stats.get('collections', 0),
+                'objects': stats.get('objects', 0),
+                'users_count': users_count,
+                'videos_count': videos_count,
+                'views_count': views_count
+            }
+            
         except Exception as e:
-            logger.error(f"Erro métricas master: {e}")
-            metrics['master'] = {"error": str(e)}
+            logger.error(f"Erro ao obter métricas primary: {e}")
+            metrics['primary'] = {'error': str(e)}
         
-        # Métricas do Slave
         try:
-            conn = self.get_connection(self.slave_config, readonly=True)
-            if conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT 
-                        (SELECT count(*) FROM pg_stat_activity WHERE state = 'active') as active_connections,
-                        (SELECT count(*) FROM videos) as total_videos,
-                        (SELECT count(*) FROM users) as total_users;
-                """)
-                result = cursor.fetchone()
-                metrics['slave'] = {
-                    'active_connections': result[0],
-                    'total_videos': result[1],
-                    'total_users': result[2]
-                }
-                conn.close()
+            # Secondary metrics
+            read_db = self.get_read_database()
+            
+            # Verificar se consegue ler do secondary
+            users_count_secondary = read_db.users.count_documents({})
+            videos_count_secondary = read_db.videos.count_documents({})
+            
+            metrics['secondary'] = {
+                'users_count': users_count_secondary,
+                'videos_count': videos_count_secondary,
+                'read_preference': 'secondaryPreferred',
+                'status': 'accessible'
+            }
+            
         except Exception as e:
-            logger.error(f"Erro métricas slave: {e}")
-            metrics['slave'] = {"error": str(e)}
+            logger.error(f"Erro ao obter métricas secondary: {e}")
+            metrics['secondary'] = {'error': str(e)}
         
         return metrics
-
-# Instância global
-db_manager = DatabaseManager()
-
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        "service": "database_manager",
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.route('/status', methods=['GET'])
-def get_status():
-    """Obter status completo do sistema de BD"""
-    master_status = db_manager.check_master_status()
-    slave_status = db_manager.check_slave_status()
-    metrics = db_manager.get_database_metrics()
     
-    return jsonify({
-        "master": master_status,
-        "slave": slave_status,
-        "metrics": metrics,
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.route('/replication/test', methods=['POST'])
-def test_replication():
-    """Testar replicação entre master e slave"""
-    result = db_manager.test_replication_lag()
-    return jsonify(result)
-
-@app.route('/failover/promote-slave', methods=['POST'])
-def promote_slave():
-    """Promover slave a master (simulação)"""
-    try:
-        # Em ambiente real, criaria arquivo trigger
-        # touch /tmp/promote_to_master no container slave
-        return jsonify({
-            "message": "Slave promotion initiated",
-            "note": "In production, this would trigger failover",
-            "timestamp": datetime.now().isoformat()
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-if __name__ == '__main__':
-    # Criar tabela de teste de replicação
-    try:
-        conn = db_manager.get_connection(db_manager.master_config)
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS replication_test (
-                    id SERIAL PRIMARY KEY,
-                    test_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    test_data TEXT
-                );
-            """)
-            conn.commit()
-            conn.close()
-            logger.info("Tabela de teste de replicação criada")
-    except Exception as e:
-        logger.error(f"Erro ao criar tabela de teste: {e}")
+    def create_indexes(self):
+        """Cria índices necessários"""
+        try:
+            db = self.get_write_database()
+            
+            # Índices para users
+            db.users.create_index('username', unique=True)
+            db.users.create_index('email')
+            db.users.create_index('created_at')
+            
+            # Índices para videos
+            db.videos.create_index('title')
+            db.videos.create_index('user_id')
+            db.videos.create_index('upload_date')
+            db.videos.create_index('status')
+            db.videos.create_index([('title', 'text'), ('description', 'text')])
+            
+            # Índices para video_views
+            db.video_views.create_index('video_id')
+            db.video_views.create_index('user_id')
+            db.video_views.create_index('view_date')
+            db.video_views.create_index([('video_id', 1), ('user_id', 1)])
+            
+            logger.info("✅ Índices MongoDB criados")
+            
+        except Exception as e:
+            logger.error(f"Erro ao criar índices: {e}")
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    def init_collections(self):
+        """Inicializa coleções com dados básicos"""
+        try:
+            db = self.get_write_database()
+            
+            # Verificar se admin já existe
+            admin_exists = db.users.find_one({'username': 'admin'})
+            
+            if not admin_exists:
+                # Criar usuário admin
+                from werkzeug.security import generate_password_hash
+                
+                admin_user = {
+                    'username': 'admin',
+                    'email': 'admin@ualflix.com',
+                    'password': generate_password_hash('admin'),
+                    'is_admin': True,
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                result = db.users.insert_one(admin_user)
+                logger.info(f"✅ Usuário admin criado: {result.inserted_id}")
+            
+            logger.info("✅ Coleções inicializadas")
+            
+        except Exception as e:
+            logger.error(f"Erro ao inicializar coleções: {e}")
+    
+    def close_connections(self):
+        """Fecha todas as conexões"""
+        try:
+            if self.write_client:
+                self.write_client.close()
+            if self.read_client:
+                self.read_client.close()
+            if self.replica_set_client:
+                self.replica_set_client.close()
+            
+            logger.info("✅ Conexões MongoDB fechadas")
+            
+        except Exception as e:
+            logger.error(f"Erro ao fechar conexões: {e}")
+
+# Decorators para gestão de conexões
+def with_write_db(func):
+    """Decorator para operações de escrita"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            db_manager = MongoDBManager()
+            db = db_manager.get_write_database()
+            return func(db, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Erro na operação de escrita {func.__name__}: {e}")
+            raise
+    return wrapper
+
+def with_read_db(func):
+    """Decorator para operações de leitura"""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            db_manager = MongoDBManager()
+            db = db_manager.get_read_database()
+            return func(db, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Erro na operação de leitura {func.__name__}: {e}")
+            # Fallback para primary se secondary falhar
+            logger.warning("Tentando fallback para primary...")
+            db = db_manager.get_write_database()
+            return func(db, *args, **kwargs)
+    return wrapper

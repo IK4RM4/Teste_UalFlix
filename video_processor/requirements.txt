@@ -3,3 +3,5 @@ prometheus-client
 flask
 waitress
 requests
+pymongo[srv]
+dnspython

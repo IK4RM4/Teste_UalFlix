@@ -2,6 +2,7 @@ flask
 flask-cors
 requests
 psutil
-docker
+pymongo[srv]
+dnspython
 prometheus-flask-exporter
 prometheus-client

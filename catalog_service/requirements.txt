@@ -1,6 +1,7 @@
 Flask
 Flask-Cors
-psycopg2-binary
+pymongo[srv]
+dnspython
 prometheus-flask-exporter
 pika
 requests

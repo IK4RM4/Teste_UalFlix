@@ -1,0 +1,19 @@
+# SERVIÇO MONGODB - Exposição interna da base de dados
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-service
+  namespace: ualflix
+  labels:
+    app: mongodb
+    tier: database
+spec:
+  selector:
+    app: mongodb
+  ports:
+  - port: 27017
+    targetPort: 27017
+    protocol: TCP
+    name: mongodb
+  type: ClusterIP  # Interno apenas
+  sessionAffinity: None

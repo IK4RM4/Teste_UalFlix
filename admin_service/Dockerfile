@@ -2,13 +2,14 @@ FROM python:3.10
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY requirements.mongodb.txt requirements.txt
 RUN pip install -r requirements.txt
 
 # Instala netcat-openbsd para health checks
 RUN apt-get update && apt-get install -y netcat-openbsd curl && rm -rf /var/lib/apt/lists/*
 
 COPY . .
+COPY db_mongodb.py .
 
 # Expor porta
 EXPOSE 8002
