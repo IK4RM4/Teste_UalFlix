@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: ualflix
   name: auth-deployment
 spec:
   replicas: 1
@@ -9,6 +10,7 @@ spec:
       app: auth
   template:
     metadata:
+  namespace: ualflix
       labels:
         app: auth
     spec:

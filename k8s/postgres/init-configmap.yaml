@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: ualflix
+data:
+  01-init.sql: |
+    -- UALFlix Database Initialization
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        email VARCHAR(100) DEFAULT '',
+        password VARCHAR(255) NOT NULL,
+        is_admin BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS videos (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(200) NOT NULL,
+        description TEXT,
+        filename VARCHAR(500),
+        url VARCHAR(500),
+        duration INTEGER,
+        file_path VARCHAR(500),
+        thumbnail_path VARCHAR(500),
+        upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        view_count INTEGER DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'active',
+        user_id INTEGER REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS video_views (
+        id SERIAL PRIMARY KEY,
+        video_id INTEGER REFERENCES videos(id),
+        user_id INTEGER REFERENCES users(id),
+        view_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        watch_duration INTEGER DEFAULT 0
+    );

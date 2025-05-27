@@ -2,33 +2,53 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres-primary
+  namespace: ualflix
 spec:
+  serviceName: postgres-primary-service
+  replicas: 1
   selector:
     matchLabels:
       app: postgres-primary
-  serviceName: "postgres-primary"
-  replicas: 1
   template:
     metadata:
       labels:
         app: postgres-primary
     spec:
       containers:
-        - name: postgres
-          image: postgres:13
-          ports:
-            - containerPort: 5432
-          envFrom:
-            - configMapRef:
-                name: postgres-config
-          volumeMounts:
-            - name: postgres-storage
-              mountPath: /var/lib/postgresql/data
+      - name: postgres
+        image: postgres:13
+        ports:
+        - containerPort: 5432
+        envFrom:
+        - configMapRef:
+            name: postgres-config
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        - name: init-sql
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: init-sql
+        configMap:
+          name: postgres-init
   volumeClaimTemplates:
-    - metadata:
-        name: postgres-storage
-      spec:
-        accessModes: [ "ReadWriteOnce" ]
-        resources:
-          requests:
-            storage: 1Gi
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary-service
+  namespace: ualflix
+spec:
+  selector:
+    app: postgres-primary
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None

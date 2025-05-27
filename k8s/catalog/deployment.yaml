@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: ualflix
   name: catalog-deployment
 spec:
   replicas: 2
@@ -9,6 +10,7 @@ spec:
       app: catalog
   template:
     metadata:
+  namespace: ualflix
       labels:
         app: catalog
     spec:

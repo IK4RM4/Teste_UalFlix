@@ -1,6 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  namespace: ualflix
   name: prometheus-config
   labels:
     name: prometheus-config
@@ -20,6 +21,7 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: ualflix
   name: prometheus
 spec:
   replicas: 1
@@ -28,6 +30,7 @@ spec:
       app: prometheus
   template:
     metadata:
+  namespace: ualflix
       labels:
         app: prometheus
     spec:
@@ -49,6 +52,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  namespace: ualflix
   name: prometheus-service
 spec:
   type: NodePort

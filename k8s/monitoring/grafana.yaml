@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: ualflix
   name: grafana
 spec:
   replicas: 1
@@ -9,6 +10,7 @@ spec:
       app: grafana
   template:
     metadata:
+  namespace: ualflix
       labels:
         app: grafana
     spec:
@@ -21,6 +23,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  namespace: ualflix
   name: grafana-service
 spec:
   selector:

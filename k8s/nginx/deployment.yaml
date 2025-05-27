@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: ualflix
   name: nginx
 spec:
   replicas: 1
@@ -9,6 +10,7 @@ spec:
       app: nginx
   template:
     metadata:
+  namespace: ualflix
       labels:
         app: nginx
     spec:

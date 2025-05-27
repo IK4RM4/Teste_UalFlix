@@ -1,6 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  namespace: ualflix
   name: postgres-replica
 spec:
   replicas: 1
@@ -9,6 +10,7 @@ spec:
       app: postgres-replica
   template:
     metadata:
+  namespace: ualflix
       labels:
         app: postgres-replica
     spec:
