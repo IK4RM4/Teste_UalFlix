@@ -1,8 +1,12 @@
 flask
 flask-cors
-requests
-psutil
 pymongo[srv]
 dnspython
+python-dotenv
+werkzeug
+bcrypt
 prometheus-flask-exporter
 prometheus-client
+pika
+requests
+waitress

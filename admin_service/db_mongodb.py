@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """
-MongoDB Database Manager - Gestão de Replica Set e Replicação
+MongoDB Connection Manager - Gestão de Replica Set e Replicação
 FUNCIONALIDADE 5: Estratégias de Replicação de Dados (MongoDB)
-FUNCIONALIDADE 2: Implementação de Cluster (MongoDB Replica Set)
 """
 
-from pymongo import MongoClient, ReadPreference, WriteConcern
+from pymongo import MongoClient, ReadPreference
 from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
 import os
 import logging
 import time
 from functools import wraps
 from datetime import datetime
-import threading
 from bson import ObjectId
 
 # Configuração de logging
@@ -22,35 +20,50 @@ logger = logging.getLogger(__name__)
 class MongoDBManager:
     """Gerenciador de conexões MongoDB com suporte a Replica Set"""
     
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(MongoDBManager, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self):
-        self.primary_config = {
-            'host': os.environ.get('MONGODB_PRIMARY_HOST', 'ualflix_db_primary'),
-            'port': int(os.environ.get('MONGODB_PRIMARY_PORT', '27017')),
-            'username': os.environ.get('MONGODB_USERNAME', 'admin'),
-            'password': os.environ.get('MONGODB_PASSWORD', 'password'),
-            'database': os.environ.get('MONGODB_DATABASE', 'ualflix'),
-            'replica_set': os.environ.get('MONGODB_REPLICA_SET', 'ualflix-replica-set')
-        }
-        
-        self.secondary_config = {
-            'host': os.environ.get('MONGODB_SECONDARY_HOST', 'ualflix_db_secondary'),
-            'port': int(os.environ.get('MONGODB_SECONDARY_PORT', '27018')),
-            'username': os.environ.get('MONGODB_USERNAME', 'admin'),
-            'password': os.environ.get('MONGODB_PASSWORD', 'password'),
-            'database': os.environ.get('MONGODB_DATABASE', 'ualflix'),
-            'replica_set': os.environ.get('MONGODB_REPLICA_SET', 'ualflix-replica-set')
-        }
-        
-        # Clients para diferentes tipos de operações
-        self.write_client = None
-        self.read_client = None
-        self.replica_set_client = None
-        
-        self._initialize_connections()
+        if not hasattr(self, 'initialized'):
+            self.initialized = True
+            
+            self.primary_config = {
+                'host': os.environ.get('MONGODB_PRIMARY_HOST', 'ualflix_db_primary'),
+                'port': int(os.environ.get('MONGODB_PRIMARY_PORT', '27017')),
+                'username': os.environ.get('MONGODB_USERNAME', 'admin'),
+                'password': os.environ.get('MONGODB_PASSWORD', 'password'),
+                'database': os.environ.get('MONGODB_DATABASE', 'ualflix'),
+                'replica_set': os.environ.get('MONGODB_REPLICA_SET', 'ualflix-replica-set')
+            }
+            
+            self.secondary_config = {
+                'host': os.environ.get('MONGODB_SECONDARY_HOST', 'ualflix_db_secondary'),
+                'port': int(os.environ.get('MONGODB_SECONDARY_PORT', '27018')),
+                'username': os.environ.get('MONGODB_USERNAME', 'admin'),
+                'password': os.environ.get('MONGODB_PASSWORD', 'password'),
+                'database': os.environ.get('MONGODB_DATABASE', 'ualflix'),
+                'replica_set': os.environ.get('MONGODB_REPLICA_SET', 'ualflix-replica-set')
+            }
+            
+            # Clients para diferentes tipos de operações
+            self.write_client = None
+            self.read_client = None
+            
+            self._initialize_connections()
     
     def _build_connection_uri(self, config, read_preference=None):
         """Constrói URI de conexão MongoDB"""
-        uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+        # Para Docker Compose, usar nome do serviço
+        if 'KUBERNETES_SERVICE_HOST' not in os.environ:
+            # Docker Compose
+            uri = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}"
+        else:
+            # Kubernetes
+            uri = f"mongodb://{config['username']}:{config['password']}@mongodb-service.ualflix.svc.cluster.local:27017/{config['database']}"
         
         params = []
         if config.get('replica_set'):
@@ -75,9 +88,7 @@ class MongoDBManager:
                 write_uri,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
-                w='majority',  # Write concern
-                j=True,        # Journal
-                readPreference='primary'
+                maxPoolSize=10
             )
             
             # Cliente para leituras (SECONDARY PREFERRED)
@@ -86,17 +97,7 @@ class MongoDBManager:
                 read_uri,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=5000,
-                readPreference='secondaryPreferred'
-            )
-            
-            # Cliente para replica set completo
-            replica_hosts = f"{self.primary_config['host']}:{self.primary_config['port']},{self.secondary_config['host']}:{self.secondary_config['port']}"
-            replica_uri = f"mongodb://{self.primary_config['username']}:{self.primary_config['password']}@{replica_hosts}/{self.primary_config['database']}?replicaSet={self.primary_config['replica_set']}&authSource=admin"
-            
-            self.replica_set_client = MongoClient(
-                replica_uri,
-                serverSelectionTimeoutMS=10000,
-                connectTimeoutMS=10000
+                maxPoolSize=20
             )
             
             logger.info("✅ Conexões MongoDB inicializadas")
@@ -104,6 +105,29 @@ class MongoDBManager:
             
         except Exception as e:
             logger.error(f"❌ Erro ao inicializar conexões MongoDB: {e}")
+            # Tentar modo single-node como fallback
+            self._initialize_single_node_fallback()
+    
+    def _initialize_single_node_fallback(self):
+        """Fallback para conexão single-node"""
+        try:
+            logger.warning("⚠️ Tentando modo single-node como fallback")
+            
+            # Conectar apenas ao primary sem replica set
+            simple_uri = f"mongodb://{self.primary_config['username']}:{self.primary_config['password']}@{self.primary_config['host']}:{self.primary_config['port']}/{self.primary_config['database']}?authSource=admin"
+            
+            self.write_client = MongoClient(
+                simple_uri,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=5000
+            )
+            
+            self.read_client = self.write_client  # Usar o mesmo cliente para leitura
+            
+            logger.info("✅ Conexão single-node MongoDB estabelecida")
+            
+        except Exception as e:
+            logger.error(f"❌ Falha no fallback single-node: {e}")
             raise
     
     def _test_connections(self):
@@ -116,10 +140,6 @@ class MongoDBManager:
             # Test read connection
             self.read_client.admin.command('ping')
             logger.info("✅ Conexão de leitura (SECONDARY) OK")
-            
-            # Test replica set
-            self.replica_set_client.admin.command('ping')
-            logger.info("✅ Conexão Replica Set OK")
             
         except Exception as e:
             logger.warning(f"⚠️ Teste de conexão falhou: {e}")
@@ -136,16 +156,10 @@ class MongoDBManager:
             self._initialize_connections()
         return self.read_client[self.secondary_config['database']]
     
-    def get_replica_database(self):
-        """Retorna database com acesso ao replica set completo"""
-        if not self.replica_set_client:
-            self._initialize_connections()
-        return self.replica_set_client[self.primary_config['database']]
-    
     def check_replica_set_status(self):
         """Verifica status do replica set"""
         try:
-            db = self.get_replica_database()
+            db = self.get_write_database()
             status = db.command('replSetGetStatus')
             
             members = []
@@ -156,15 +170,11 @@ class MongoDBManager:
                     'health': member.get('health'),
                     'is_primary': member.get('stateStr') == 'PRIMARY',
                     'is_secondary': member.get('stateStr') == 'SECONDARY',
-                    'is_arbiter': member.get('stateStr') == 'ARBITER',
-                    'last_heartbeat': member.get('lastHeartbeat'),
-                    'ping_ms': member.get('pingMs', 0)
+                    'is_arbiter': member.get('stateStr') == 'ARBITER'
                 })
             
             return {
                 'set_name': status.get('set'),
-                'date': status.get('date'),
-                'primary_name': next((m['name'] for m in members if m['is_primary']), None),
                 'members': members,
                 'status': 'healthy' if len([m for m in members if m['health'] == 1]) >= 2 else 'degraded'
             }
@@ -323,21 +333,16 @@ class MongoDBManager:
             
         except Exception as e:
             logger.error(f"Erro ao inicializar coleções: {e}")
-    
-    def close_connections(self):
-        """Fecha todas as conexões"""
-        try:
-            if self.write_client:
-                self.write_client.close()
-            if self.read_client:
-                self.read_client.close()
-            if self.replica_set_client:
-                self.replica_set_client.close()
-            
-            logger.info("✅ Conexões MongoDB fechadas")
-            
-        except Exception as e:
-            logger.error(f"Erro ao fechar conexões: {e}")
+
+# Singleton instance
+_mongodb_manager = None
+
+def get_mongodb_manager():
+    """Retorna instância singleton do MongoDB Manager"""
+    global _mongodb_manager
+    if _mongodb_manager is None:
+        _mongodb_manager = MongoDBManager()
+    return _mongodb_manager
 
 # Decorators para gestão de conexões
 def with_write_db(func):
@@ -345,7 +350,7 @@ def with_write_db(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
-            db_manager = MongoDBManager()
+            db_manager = get_mongodb_manager()
             db = db_manager.get_write_database()
             return func(db, *args, **kwargs)
         except Exception as e:
@@ -358,7 +363,7 @@ def with_read_db(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
-            db_manager = MongoDBManager()
+            db_manager = get_mongodb_manager()
             db = db_manager.get_read_database()
             return func(db, *args, **kwargs)
         except Exception as e:

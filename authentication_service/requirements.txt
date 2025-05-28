@@ -6,3 +6,7 @@ python-dotenv
 werkzeug
 bcrypt
 prometheus-flask-exporter
+prometheus-client
+pika
+requests
+waitress
