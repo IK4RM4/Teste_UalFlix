@@ -1,8 +1,9 @@
-# UALFlix - Docker Compose com MongoDB - MIGRAÇÃO COMPLETA
+# UALFlix - Docker Compose com MongoDB Replica Set AUTOMÁTICO
+# FUNCIONALIDADE 5: Estratégias de Replicação de Dados (MongoDB)
 
 services:
   # ================================================================
-  # DATABASE - MONGODB CLUSTER (FUNCIONALIDADE 5: Replicação)
+  # DATABASE - MONGODB REPLICA SET AUTOMÁTICO
   # ================================================================
   
   # MongoDB Primary
@@ -19,28 +20,45 @@ services:
     volumes:
       - mongodb_primary_data:/data/db
       - ./database/mongodb/init-replica.js:/docker-entrypoint-initdb.d/init-replica.js:ro
-      - ./database/mongodb/init-data.js:/docker-entrypoint-initdb.d/init-data.js:ro
     networks:
       - ualflix_network
     command: >
       bash -c "
+        echo 'Iniciando MongoDB Primary...'
         mongod --replSet ualflix-replica-set --bind_ip_all --port 27017 &
-        sleep 10 &&
-        mongosh --eval 'rs.initiate({
-          _id: \"ualflix-replica-set\",
-          members: [
-            { _id: 0, host: \"ualflix_db_primary:27017\", priority: 2 },
-            { _id: 1, host: \"ualflix_db_secondary:27018\", priority: 1 },
-            { _id: 2, host: \"ualflix_db_arbiter:27019\", arbiterOnly: true }
-          ]
-        })' &&
-        wait
+        MONGO_PID=$$!
+        
+        echo 'Aguardando MongoDB inicializar...'
+        sleep 15
+        
+        echo 'Inicializando Replica Set...'
+        mongosh --eval '
+        try {
+          rs.initiate({
+            _id: \"ualflix-replica-set\",
+            members: [
+              { _id: 0, host: \"ualflix_db_primary:27017\", priority: 2 },
+              { _id: 1, host: \"ualflix_db_secondary:27018\", priority: 1 },
+              { _id: 2, host: \"ualflix_db_arbiter:27019\", arbiterOnly: true }
+            ]
+          });
+          print(\"✅ Replica Set inicializado com sucesso!\");
+        } catch (error) {
+          print(\"⚠️ Replica Set já existe ou erro:\", error);
+        }
+        
+        rs.status();
+        '
+        
+        echo 'Aguardando processo MongoDB...'
+        wait $$MONGO_PID
       "
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # MongoDB Secondary (Read replica)
@@ -59,12 +77,13 @@ services:
     command: mongod --replSet ualflix-replica-set --bind_ip_all --port 27018
     depends_on:
       ualflix_db_primary:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "mongosh", "--port", "27018", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   # MongoDB Arbiter (Para decisões de failover)
@@ -83,12 +102,13 @@ services:
     command: mongod --replSet ualflix-replica-set --bind_ip_all --port 27019
     depends_on:
       ualflix_db_primary:
-        condition: service_healthy
+        condition: service_started
     healthcheck:
       test: ["CMD", "mongosh", "--port", "27019", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   # MongoDB Express - Interface Web
@@ -130,7 +150,7 @@ services:
     command: >
       bash -c "
         echo '[rabbitmq_management,rabbitmq_prometheus].' > /etc/rabbitmq/enabled_plugins &&
-        rabbitmq-server
+        exec rabbitmq-server
       "
     healthcheck:
       test: rabbitmq-diagnostics -q ping
@@ -140,14 +160,14 @@ services:
     restart: unless-stopped
 
   # ================================================================
-  # MICROSERVICES - ATUALIZADOS PARA MONGODB
+  # MICROSERVICES - MONGODB
   # ================================================================
 
   # Authentication Service
   authentication_service:
     build: 
       context: ./authentication_service
-      dockerfile: Dockerfile.mongodb
+      dockerfile: Dockerfile
     container_name: ualflix_auth
     environment:
       - SECRET_KEY=ualflix-secret-key-change-in-production
@@ -175,7 +195,7 @@ services:
   catalog_service:
     build: 
       context: ./catalog_service
-      dockerfile: Dockerfile.mongodb
+      dockerfile: Dockerfile
     container_name: ualflix_catalog
     environment:
       - QUEUE_HOST=queue_service
@@ -227,7 +247,7 @@ services:
   video_processor:
     build: 
       context: ./video_processor
-      dockerfile: Dockerfile.mongodb
+      dockerfile: Dockerfile
     container_name: ualflix_processor
     environment:
       - QUEUE_HOST=queue_service
@@ -235,6 +255,8 @@ services:
       - QUEUE_PASSWORD=ualflix_password
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
       - MONGODB_PRIMARY_PORT=27017
+      - MONGODB_SECONDARY_HOST=ualflix_db_secondary
+      - MONGODB_SECONDARY_PORT=27018
       - MONGODB_DATABASE=ualflix
       - MONGODB_USERNAME=admin
       - MONGODB_PASSWORD=password
@@ -250,11 +272,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  # Admin Service - Atualizador para MongoDB
+  # Admin Service - MongoDB
   admin_service:
     build: 
       context: ./admin_service
-      dockerfile: Dockerfile.mongodb
+      dockerfile: Dockerfile
     container_name: ualflix_admin
     environment:
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
