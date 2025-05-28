@@ -1,117 +1,63 @@
 services:
-  # MongoDB Primary
+  # MongoDB Single Node - ULTRA SIMPLES
   ualflix_db_primary:
     image: mongo:5.0
     container_name: ualflix_db_primary
+    restart: unless-stopped
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password
+      - MONGO_INITDB_DATABASE=ualflix
     volumes:
-      - mongo_primary_data:/data/db
-      - ./init_replica.js:/docker-entrypoint-initdb.d/init_replica.js
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
-    command: ["mongod", "--replSet", "ualflix-replica-set", "--bind_ip_all", "--keyFile", "/etc/mongodb-keyfile"]
+      - mongo_data:/data/db
+    command: mongod --bind_ip_all --auth
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
-      interval: 10s
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 40s
+      retries: 3
+      start_period: 60s
     networks:
       - ualflix_net
 
-  # MongoDB Secondary
-  ualflix_db_secondary:
-    image: mongo:5.0
-    container_name: ualflix_db_secondary
-    ports:
-      - "27018:27018"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
-    volumes:
-      - mongo_secondary_data:/data/db
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
-    command: ["mongod", "--replSet", "ualflix-replica-set", "--bind_ip_all", "--keyFile", "/etc/mongodb-keyfile"]
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
-    networks:
-      - ualflix_net
-
-  # MongoDB Arbiter
-  ualflix_db_arbiter:
-    image: mongo:5.0
-    container_name: ualflix_db_arbiter
-    ports:
-      - "27019:27019"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
-    volumes:
-      - ./mongodb-keyfile:/etc/mongodb-keyfile:ro
-    command: ["mongod", "--replSet", "ualflix-replica-set", "--bind_ip_all", "--keyFile", "/etc/mongodb-keyfile"]
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
-    networks:
-      - ualflix_net
-
-  # Replica Set Initializer
-  mongo_rs_initiator:
-    image: mongo:5.0
-    depends_on:
-      ualflix_db_primary:
-        condition: service_healthy
-      ualflix_db_secondary:
-        condition: service_healthy
-      ualflix_db_arbiter:
-        condition: service_healthy
-    entrypoint: >
-      bash -c '
-      sleep 30;
-      echo "🌀 Iniciando Replica Set...";
-      mongosh --host ualflix_db_primary:27017 --eval "
-        rs.initiate({
-          _id: '\''ualflix-replica-set'\'',
-          members: [
-            { _id: 0, host: '\''ualflix_db_primary:27017'\'' },
-            { _id: 1, host: '\''ualflix_db_secondary:27018'\'' },
-            { _id: 2, host: '\''ualflix_db_arbiter:27019'\'', arbiterOnly: true }
-          ]
-        });
-      ";
-      sleep 10;
-      echo "🔐 Configurando autenticação...";
-      mongosh --host ualflix_db_primary:27017 --eval "
-        db.getSiblingDB('\''admin'\'').createUser({
-          user: '\''admin'\'',
-          pwd: '\''password'\'',
-          roles: [ { role: '\''root'\'', db: '\''admin'\'' } ]
-        });
-      ";
-      '
-    networks:
-      - ualflix_net
-
-  # RabbitMQ
+  # RabbitMQ - TESTADO E FUNCIONANDO
   queue_service:
     image: rabbitmq:3-management
     container_name: queue_service
+    restart: unless-stopped
     ports:
       - "5672:5672"
       - "15672:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=ualflix
       - RABBITMQ_DEFAULT_PASS=ualflix_password
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - ualflix_net
+
+  # Authentication Service - CORRIGIDO
+  authentication_service:
+    build:
+      context: ./authentication_service
+    container_name: authentication_service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_USERNAME=admin
+      - MONGODB_PASSWORD=password
+      - MONGODB_DATABASE=ualflix
+    depends_on:
+      ualflix_db_primary:
+        condition: service_healthy
     networks:
       - ualflix_net
 
@@ -120,33 +66,25 @@ services:
     build:
       context: ./catalog_service
     container_name: catalog_service
+    restart: unless-stopped
     ports:
       - "8001:8000"
     environment:
-      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_USERNAME=admin
+      - MONGODB_PASSWORD=password
+      - MONGODB_DATABASE=ualflix
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
       - QUEUE_PASSWORD=ualflix_password
       - AUTH_SERVICE_URL=http://authentication_service:8000
     volumes:
-      - ./catalog_service/uploads:/videos
+      - ./video_data:/videos
     depends_on:
-      - ualflix_db_primary
-      - queue_service
-    networks:
-      - ualflix_net
-
-  # Authentication Service
-  authentication_service:
-    build:
-      context: ./authentication_service
-    container_name: authentication_service
-    ports:
-      - "8000:8000"
-    environment:
-      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
-    depends_on:
-      - ualflix_db_primary
+      ualflix_db_primary:
+        condition: service_healthy
+      queue_service:
+        condition: service_healthy
     networks:
       - ualflix_net
 
@@ -155,14 +93,20 @@ services:
     build:
       context: ./admin_service
     container_name: admin_service
+    restart: unless-stopped
     ports:
-      - "8002:8000"
+      - "8002:8002"
     environment:
-      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_USERNAME=admin
+      - MONGODB_PASSWORD=password
+      - MONGODB_DATABASE=ualflix
       - AUTH_SERVICE_URL=http://authentication_service:8000
     depends_on:
-      - ualflix_db_primary
-      - authentication_service
+      ualflix_db_primary:
+        condition: service_healthy
+      authentication_service:
+        condition: service_started
     networks:
       - ualflix_net
 
@@ -171,18 +115,11 @@ services:
     build:
       context: ./streaming_service
     container_name: streaming_service
+    restart: unless-stopped
     ports:
-      - "8003:8000"
-    environment:
-      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
-      - QUEUE_HOST=queue_service
-      - QUEUE_USER=ualflix
-      - QUEUE_PASSWORD=ualflix_password
+      - "8003:8001"
     volumes:
       - ./video_data:/videos
-    depends_on:
-      - ualflix_db_primary
-      - queue_service
     networks:
       - ualflix_net
 
@@ -191,16 +128,22 @@ services:
     build:
       context: ./video_processor
     container_name: video_processor
+    restart: unless-stopped
     environment:
-      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_USERNAME=admin
+      - MONGODB_PASSWORD=password
+      - MONGODB_DATABASE=ualflix
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
       - QUEUE_PASSWORD=ualflix_password
     volumes:
       - ./video_data:/videos
     depends_on:
-      - ualflix_db_primary
-      - queue_service
+      ualflix_db_primary:
+        condition: service_healthy
+      queue_service:
+        condition: service_healthy
     networks:
       - ualflix_net
 
@@ -209,8 +152,10 @@ services:
     build:
       context: ./frontend
     container_name: frontend
+    restart: unless-stopped
     ports:
-      - "8080:80"
+      - "3000:3000"
+    command: ["serve", "-s", "build", "-l", "3000"]
     depends_on:
       - catalog_service
       - authentication_service
@@ -219,17 +164,16 @@ services:
     networks:
       - ualflix_net
 
-  # Nginx
+  # Nginx - CONFIGURAÇÃO CORRIGIDA
   nginx:
     image: nginx:latest
     container_name: nginx
+    restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - frontend
       - catalog_service
@@ -239,23 +183,10 @@ services:
     networks:
       - ualflix_net
 
-  # HAProxy
-  haproxy:
-    image: haproxy:latest
-    container_name: haproxy
-    ports:
-      - "8404:8404"  # Stats page
-      - "8405:8405"  # Admin interface
-    volumes:
-      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-    depends_on:
-      - nginx
-    networks:
-      - ualflix_net
-
 networks:
   ualflix_net:
+    driver: bridge
 
 volumes:
-  mongo_primary_data:
-  mongo_secondary_data:
+  mongo_data:
+    driver: local

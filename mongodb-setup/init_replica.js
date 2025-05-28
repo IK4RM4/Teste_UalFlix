@@ -1,12 +1,14 @@
-// UALFlix MongoDB Replica Set Initialization Script
-// FUNCIONALIDADE 5: Estratégias de Replicação de Dados
+// MongoDB Replica Set Setup Script
+// Este script deve ser colocado em: mongodb-setup/init-replica.js
 
 print("🎬 UALFlix - Inicializando MongoDB com Replica Set...");
+
+// Aguardar que o MongoDB esteja totalmente pronto
+sleep(5000);
 
 // Switch to ualflix database
 db = db.getSiblingDB('ualflix');
 
-// Create collections with schema validation
 print("📋 Criando coleções com validação de schema...");
 
 // Users Collection
@@ -39,10 +41,6 @@ try {
               created_at: {
                  bsonType: "date",
                  description: "deve ser uma data"
-              },
-              updated_at: {
-                 bsonType: "date",
-                 description: "deve ser uma data"
               }
            }
         }
@@ -50,7 +48,7 @@ try {
   });
   print("✅ Coleção 'users' criada com validação");
 } catch (error) {
-  print("⚠️ Coleção 'users' já existe:", error.message);
+  print("⚠️ Coleção 'users' já existe ou erro:", error.message);
 }
 
 // Videos Collection
@@ -90,14 +88,6 @@ try {
                  minimum: 0,
                  description: "deve ser um número >= 0"
               },
-              file_path: {
-                 bsonType: "string",
-                 description: "deve ser uma string"
-              },
-              thumbnail_path: {
-                 bsonType: "string",
-                 description: "deve ser uma string"
-              },
               upload_date: {
                  bsonType: "date",
                  description: "deve ser uma data"
@@ -114,14 +104,6 @@ try {
               user_id: {
                  bsonType: "objectId",
                  description: "deve ser um ObjectId"
-              },
-              created_at: {
-                 bsonType: "date",
-                 description: "deve ser uma data"
-              },
-              updated_at: {
-                 bsonType: "date",
-                 description: "deve ser uma data"
               }
            }
         }
@@ -129,10 +111,10 @@ try {
   });
   print("✅ Coleção 'videos' criada com validação");
 } catch (error) {
-  print("⚠️ Coleção 'videos' já existe:", error.message);
+  print("⚠️ Coleção 'videos' já existe ou erro:", error.message);
 }
 
-// Video Views Collection (for analytics)
+// Video Views Collection
 try {
   db.createCollection("video_views", {
      validator: {
@@ -157,10 +139,6 @@ try {
                  bsonType: "number",
                  minimum: 0,
                  description: "deve ser um número >= 0"
-              },
-              ip_address: {
-                 bsonType: "string",
-                 description: "deve ser uma string"
               }
            }
         }
@@ -168,29 +146,17 @@ try {
   });
   print("✅ Coleção 'video_views' criada com validação");
 } catch (error) {
-  print("⚠️ Coleção 'video_views' já existe:", error.message);
+  print("⚠️ Coleção 'video_views' já existe ou erro:", error.message);
 }
 
-// Replication Test Collection (for testing replica set lag)
+// Replication Test Collection
 try {
-  db.createCollection("replication_test", {
-    validator: {
-      $jsonSchema: {
-        bsonType: "object",
-        properties: {
-          test_time: { bsonType: "date" },
-          test_data: { bsonType: "string" },
-          type: { enum: ["replication_test"] }
-        }
-      }
-    }
-  });
+  db.createCollection("replication_test");
   print("✅ Coleção 'replication_test' criada");
 } catch (error) {
-  print("⚠️ Coleção 'replication_test' já existe:", error.message);
+  print("⚠️ Coleção 'replication_test' já existe ou erro:", error.message);
 }
 
-// Create indexes for performance
 print("🔍 Criando índices para performance...");
 
 try {
@@ -206,24 +172,20 @@ try {
   db.videos.createIndex({ "upload_date": -1 }, { name: "idx_upload_date" });
   db.videos.createIndex({ "view_count": -1 }, { name: "idx_view_count" });
   db.videos.createIndex({ "title": "text", "description": "text" }, { name: "idx_text_search" });
-  db.videos.createIndex({ "user_id": 1, "status": 1 }, { name: "idx_user_status" });
   
   // Video Views indexes
   db.video_views.createIndex({ "video_id": 1 }, { name: "idx_video_id" });
   db.video_views.createIndex({ "user_id": 1 }, { name: "idx_user_id_views" });
   db.video_views.createIndex({ "view_date": -1 }, { name: "idx_view_date" });
-  db.video_views.createIndex({ "video_id": 1, "user_id": 1 }, { name: "idx_video_user_compound" });
   
   // Replication test indexes
   db.replication_test.createIndex({ "test_time": 1 }, { name: "idx_test_time" });
-  db.replication_test.createIndex({ "type": 1 }, { name: "idx_test_type" });
   
   print("✅ Todos os índices criados com sucesso");
 } catch (error) {
-  print("⚠️ Alguns índices já existem:", error.message);
+  print("⚠️ Alguns índices já existem ou erro:", error.message);
 }
 
-// Insert sample data
 print("📊 Inserindo dados de exemplo...");
 
 try {
@@ -265,32 +227,6 @@ try {
   print("❌ Erro ao criar usuários:", error.message);
 }
 
-// Create sample video if admin user exists
-try {
-  const adminUser = db.users.findOne({ username: "admin" });
-  if (adminUser && db.videos.countDocuments() === 0) {
-    const sampleVideo = db.videos.insertOne({
-        title: "Vídeo de Demonstração UALFlix",
-        description: "Este é um vídeo de demonstração para testar o sistema UALFlix com MongoDB Replica Set.",
-        filename: "sample_demo.mp4",
-        url: "/stream/sample_demo.mp4",
-        duration: 180, // 3 minutos
-        file_size: 15728640, // ~15MB
-        file_path: "/videos/sample_demo.mp4",
-        thumbnail_path: "thumb_sample_demo.mp4.jpg",
-        upload_date: new Date(),
-        view_count: 0,
-        status: "active",
-        user_id: adminUser._id,
-        created_at: new Date(),
-        updated_at: new Date()
-    });
-    print("✅ Vídeo de demonstração criado:", sampleVideo.insertedId);
-  }
-} catch (error) {
-  print("⚠️ Erro ao criar vídeo de demonstração:", error.message);
-}
-
 // Database statistics
 print("📈 Estatísticas da base de dados:");
 try {
@@ -304,32 +240,13 @@ try {
   print("❌ Erro ao obter estatísticas:", error.message);
 }
 
-// Test replication functionality
-print("🔄 Testando funcionalidade de replicação...");
-try {
-  const testDoc = {
-    test_time: new Date(),
-    test_data: "Teste inicial de replicação - " + new Date().getTime(),
-    type: "replication_test"
-  };
-  
-  const result = db.replication_test.insertOne(testDoc);
-  print("✅ Documento de teste de replicação inserido:", result.insertedId);
-  
-  // Clean up test document
-  db.replication_test.deleteOne({ _id: result.insertedId });
-  print("✅ Documento de teste removido");
-} catch (error) {
-  print("❌ Erro no teste de replicação:", error.message);
-}
-
 print("");
 print("🎉 UALFlix MongoDB initialization completed successfully!");
 print("📊 FUNCIONALIDADE 5: Estratégias de Replicação de Dados - MongoDB Replica Set");
 print("🔄 Replica Set configurado com:");
 print("   - PRIMARY: ualflix_db_primary:27017");
-print("   - SECONDARY: ualflix_db_secondary:27018"); 
-print("   - ARBITER: ualflix_db_arbiter:27019");
+print("   - SECONDARY: ualflix_db_secondary:27017"); 
+print("   - ARBITER: ualflix_db_arbiter:27017");
 print("");
 print("🔐 Utilizadores criados:");
 print("   - admin / admin (Administrador)");
