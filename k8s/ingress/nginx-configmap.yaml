@@ -1,0 +1,117 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: ualflix
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+
+    http {
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+        
+        log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                        '$status $body_bytes_sent "$http_referer" '
+                        '"$http_user_agent" "$http_x_forwarded_for"';
+        
+        access_log /var/log/nginx/access.log main;
+        
+        sendfile on;
+        tcp_nopush on;
+        tcp_nodelay on;
+        keepalive_timeout 65;
+        types_hash_max_size 2048;
+        
+        # Gzip Settings
+        gzip on;
+        gzip_disable "msie6";
+        gzip_vary on;
+        gzip_proxied any;
+        gzip_comp_level 6;
+        gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+        upstream frontend_backend {
+            server frontend-service:3000;
+        }
+
+        upstream auth_backend {
+            server authentication-service:8000;
+        }
+
+        upstream catalog_backend {
+            server catalog-service:8000;
+        }
+
+        upstream streaming_backend {
+            server streaming-service:8001;
+        }
+
+        upstream admin_backend {
+            server admin-service:8002;
+        }
+
+        server {
+            listen 8080;
+            client_max_body_size 1024M;
+
+            # Frontend (React app) - ROTA PRINCIPAL
+            location / {
+                proxy_pass http://frontend_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_cache_bypass $http_upgrade;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            # Authentication API
+            location /api/auth/ {
+                rewrite ^/api/auth(/.*)$ $1 break;
+                proxy_pass http://auth_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            # Admin API
+            location /api/admin/ {
+                rewrite ^/api/admin(/.*)$ /api/admin$1 break;
+                proxy_pass http://admin_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            # Catalog API
+            location /api/ {
+                rewrite ^/api(/.*)$ $1 break;
+                proxy_pass http://catalog_backend;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            # Streaming
+            location /stream/ {
+                proxy_pass http://streaming_backend/stream/;
+                proxy_http_version 1.1;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header Range $http_range;
+                proxy_buffering off;
+                proxy_cache off;
+            }
+        }
+    } 
