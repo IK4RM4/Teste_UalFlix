@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Instalar dependências do sistema
 RUN apt-get update && apt-get install -y \
-    netcat \
+    netcat-openbsd \
     curl \
  && rm -rf /var/lib/apt/lists/*
 
@@ -17,7 +17,7 @@ COPY . .
 RUN chmod +x wait-for-it.sh
 
 # Instalar dependências Python
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.mongodb.txt
 
 # Expõe a porta da API Flask
 EXPOSE 8000
