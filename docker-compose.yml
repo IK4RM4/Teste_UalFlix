@@ -1,5 +1,8 @@
+
 services:
-  # MongoDB Single Node - ULTRA SIMPLES
+  # ===================================================================
+  # MONGODB - Base de Dados Principal
+  # ===================================================================
   ualflix_db_primary:
     image: mongo:5.0
     container_name: ualflix_db_primary
@@ -22,7 +25,9 @@ services:
     networks:
       - ualflix_net
 
-  # RabbitMQ - TESTADO E FUNCIONANDO
+  # ===================================================================
+  # RABBITMQ - Message Queue para processamento assíncrono
+  # ===================================================================
   queue_service:
     image: rabbitmq:3-management
     container_name: queue_service
@@ -42,42 +47,67 @@ services:
     networks:
       - ualflix_net
 
-  # Authentication Service - CORRIGIDO
+  # ===================================================================
+  # AUTHENTICATION SERVICE - Gestão de utilizadores e sessões
+  # ===================================================================
   authentication_service:
     build:
       context: ./authentication_service
+      dockerfile: Dockerfile
     container_name: authentication_service
     restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
+      # MongoDB Configuration
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_PRIMARY_PORT=27017
       - MONGODB_USERNAME=admin
       - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
+      # Application Configuration
+      - SECRET_KEY=ualflix-secret-key-change-in-production
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
     depends_on:
       ualflix_db_primary:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     networks:
       - ualflix_net
 
-  # Catalog Service
+  # ===================================================================
+  # CATALOG SERVICE - Gestão de vídeos e uploads
+  # ===================================================================
   catalog_service:
     build:
       context: ./catalog_service
+      dockerfile: Dockerfile
     container_name: catalog_service
     restart: unless-stopped
     ports:
       - "8001:8000"
     environment:
+      # MongoDB Configuration
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_PRIMARY_PORT=27017
       - MONGODB_USERNAME=admin
       - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
+      # RabbitMQ Configuration
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
       - QUEUE_PASSWORD=ualflix_password
+      # Service URLs
       - AUTH_SERVICE_URL=http://authentication_service:8000
+      # Application Configuration
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
     volumes:
       - ./video_data:/videos
     depends_on:
@@ -85,58 +115,106 @@ services:
         condition: service_healthy
       queue_service:
         condition: service_healthy
+      authentication_service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     networks:
       - ualflix_net
 
-  # Admin Service
+  # ===================================================================
+  # ADMIN SERVICE - Painel de administração e métricas
+  # ===================================================================
   admin_service:
     build:
       context: ./admin_service
+      dockerfile: Dockerfile
     container_name: admin_service
     restart: unless-stopped
     ports:
       - "8002:8002"
     environment:
+      # MongoDB Configuration
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_PRIMARY_PORT=27017
       - MONGODB_USERNAME=admin
       - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
+      # Service URLs
       - AUTH_SERVICE_URL=http://authentication_service:8000
+      - CATALOG_SERVICE_URL=http://catalog_service:8000
+      - STREAMING_SERVICE_URL=http://streaming_service:8001
+      # Application Configuration
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
     depends_on:
       ualflix_db_primary:
         condition: service_healthy
       authentication_service:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     networks:
       - ualflix_net
 
-  # Streaming Service
+  # ===================================================================
+  # STREAMING SERVICE - Reprodução de vídeos
+  # ===================================================================
   streaming_service:
     build:
       context: ./streaming_service
+      dockerfile: Dockerfile
     container_name: streaming_service
     restart: unless-stopped
     ports:
       - "8003:8001"
+    environment:
+      # Application Configuration
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
     volumes:
-      - ./video_data:/videos
+      - ./video_data:/videos:ro  # Read-only para streaming
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - ualflix_net
 
-  # Video Processor
+  # ===================================================================
+  # VIDEO PROCESSOR - Processamento assíncrono de vídeos
+  # ===================================================================
   video_processor:
     build:
       context: ./video_processor
+      dockerfile: Dockerfile
     container_name: video_processor
     restart: unless-stopped
+    ports:
+      - "8004:8000"  # Para health checks
     environment:
+      # MongoDB Configuration
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
+      - MONGODB_PRIMARY_PORT=27017
       - MONGODB_USERNAME=admin
       - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
+      # RabbitMQ Configuration
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
       - QUEUE_PASSWORD=ualflix_password
+      # Application Configuration
+      - PYTHONUNBUFFERED=1
     volumes:
       - ./video_data:/videos
     depends_on:
@@ -144,49 +222,156 @@ services:
         condition: service_healthy
       queue_service:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 45s
     networks:
       - ualflix_net
 
-  # Frontend
+  # ===================================================================
+  # FRONTEND - Interface React
+  # ===================================================================
   frontend:
     build:
       context: ./frontend
+      dockerfile: Dockerfile
     container_name: frontend
     restart: unless-stopped
     ports:
       - "3000:3000"
+    environment:
+      - NODE_ENV=development
     command: ["serve", "-s", "build", "-l", "3000"]
     depends_on:
-      - catalog_service
       - authentication_service
+      - catalog_service
       - admin_service
       - streaming_service
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - ualflix_net
 
-  # Nginx - CONFIGURAÇÃO CORRIGIDA
+  
+# ===================================================================
+# NGINX - Configuração para porta 8080
+# ===================================================================
   nginx:
     image: nginx:latest
     container_name: nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:8080"  # Mudança aqui: 8080 externa -> 8080 interna
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
-      - frontend
-      - catalog_service
+      frontend:
+        condition: service_healthy
+      authentication_service:
+        condition: service_healthy
+      catalog_service:
+        condition: service_healthy
+      admin_service:
+        condition: service_healthy
+      streaming_service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - ualflix_net
+
+  # ===================================================================
+  # PROMETHEUS - Métricas (Opcional)
+  # ===================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert.rules:/etc/prometheus/alert.rules:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    depends_on:
       - authentication_service
+      - catalog_service
       - admin_service
       - streaming_service
     networks:
       - ualflix_net
 
+  # ===================================================================
+  # GRAFANA - Dashboards (Opcional)
+  # ===================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    networks:
+      - ualflix_net
+
+# ===================================================================
+# NETWORKS
+# ===================================================================
 networks:
   ualflix_net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
+# ===================================================================
+# VOLUMES
+# ===================================================================
 volumes:
   mongo_data:
     driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/mongodb
+  
+  prometheus_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/prometheus
+  
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/grafana

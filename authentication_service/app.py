@@ -7,7 +7,7 @@ import logging
 import json
 import uuid
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from bson import ObjectId
 from db_mongodb import get_mongodb_manager, with_write_db, with_read_db
 
@@ -45,7 +45,7 @@ def generate_session_token():
 def get_user_from_token(token):
     """Retorna informações do usuário baseado no token de sessão."""
     session_data = active_sessions.get(token)
-    if session_data and session_data['expires'] > datetime.now():
+    if session_data and session_data['expires'] > datetime.now(timezone.utc):
         return session_data['user']
     return None
 
@@ -66,8 +66,8 @@ def create_user(db, username, email, password, is_admin=False):
         'email': email,
         'password': hashed_password,
         'is_admin': is_admin,
-        'created_at': datetime.utcnow(),
-        'updated_at': datetime.utcnow()
+        'created_at': datetime.now(timezone.utc),
+        'updated_at': datetime.now(timezone.utc)
     }
     
     # Inserir no MongoDB
@@ -128,7 +128,7 @@ def register():
                 'email': email,
                 'is_admin': is_admin
             },
-            'expires': datetime.now() + timedelta(hours=24)
+            'expires': datetime.now(timezone.utc) + timedelta(hours=24)
         }
 
         logger.info(f"User {username} registered successfully")
@@ -172,7 +172,7 @@ def login():
         token = generate_session_token()
         active_sessions[token] = {
             'user': user,
-            'expires': datetime.now() + timedelta(hours=24)
+            'expires': datetime.now(timezone.utc) + timedelta(hours=24)
         }
 
         logger.info(f"User {username} logged in successfully")
@@ -243,8 +243,8 @@ def health_check():
             "status": "healthy", 
             "service": "authentication",
             "database": "mongodb",
-            "replica_set": manager.primary_config.get('replica_set'),
-            "users_count": users_count
+            "users_count": users_count,
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }), 200
         
     except Exception as e:
@@ -252,7 +252,8 @@ def health_check():
         return jsonify({
             "status": "unhealthy", 
             "database": "mongodb_failed",
-            "error": str(e)
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }), 500
 
 @app.route("/stats", methods=["GET"])
@@ -266,7 +267,7 @@ def get_stats():
         
         # Estatísticas de sessões
         active_sessions_count = len([s for s in active_sessions.values() 
-                                   if s['expires'] > datetime.now()])
+                                   if s['expires'] > datetime.now(timezone.utc)])
         
         # Status do replica set
         replica_status = manager.check_replica_set_status()
@@ -277,7 +278,7 @@ def get_stats():
             "total_sessions_created": len(active_sessions),
             "database_metrics": metrics,
             "replica_set_status": replica_status,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         })
         
     except Exception as e:

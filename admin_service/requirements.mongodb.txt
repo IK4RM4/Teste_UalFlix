@@ -10,3 +10,4 @@ prometheus-client
 pika
 requests
 waitress
+psutil
