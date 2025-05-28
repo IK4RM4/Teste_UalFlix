@@ -1,459 +1,138 @@
-# UALFlix - Docker Compose com MongoDB Replica Set AUTOMÁTICO
-# FUNCIONALIDADE 5: Estratégias de Replicação de Dados (MongoDB)
+version: "3.9"
 
 services:
-  # ================================================================
-  # DATABASE - MONGODB REPLICA SET AUTOMÁTICO
-  # ================================================================
-  
   # MongoDB Primary
   ualflix_db_primary:
-    image: mongo:7.0
-    container_name: ualflix_mongo_primary
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: password
-      MONGO_INITDB_DATABASE: ualflix
-      MONGO_REPLICA_SET_NAME: ualflix-replica-set
+    image: mongo:5.0
+    container_name: ualflix_db_primary
     ports:
       - "27017:27017"
-    volumes:
-      - mongodb_primary_data:/data/db
-      - ./database/mongodb/init-replica.js:/docker-entrypoint-initdb.d/init-replica.js:ro
-    networks:
-      - ualflix_network
-    command: >
-      bash -c "
-        echo 'Iniciando MongoDB Primary...'
-        mongod --replSet ualflix-replica-set --bind_ip_all --port 27017 &
-        MONGO_PID=$$!
-        
-        echo 'Aguardando MongoDB inicializar...'
-        sleep 15
-        
-        echo 'Inicializando Replica Set...'
-        mongosh --eval '
-        try {
-          rs.initiate({
-            _id: \"ualflix-replica-set\",
-            members: [
-              { _id: 0, host: \"ualflix_db_primary:27017\", priority: 2 },
-              { _id: 1, host: \"ualflix_db_secondary:27018\", priority: 1 },
-              { _id: 2, host: \"ualflix_db_arbiter:27019\", arbiterOnly: true }
-            ]
-          });
-          print(\"✅ Replica Set inicializado com sucesso!\");
-        } catch (error) {
-          print(\"⚠️ Replica Set já existe ou erro:\", error);
-        }
-        
-        rs.status();
-        '
-        
-        echo 'Aguardando processo MongoDB...'
-        wait $$MONGO_PID
-      "
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    restart: unless-stopped
-
-  # MongoDB Secondary (Read replica)
-  ualflix_db_secondary:
-    image: mongo:7.0
-    container_name: ualflix_mongo_secondary
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongo_primary_data:/data/db
+      - ./init_replica.js:/docker-entrypoint-initdb.d/init_replica.js
+    command: ["mongod", "--replSet", "ualflix-replica-set", "--bind_ip_all"]
+    networks:
+      - ualflix_net
+
+  # MongoDB Secondary
+  ualflix_db_secondary:
+    image: mongo:5.0
+    container_name: ualflix_db_secondary
     ports:
       - "27018:27018"
-    volumes:
-      - mongodb_secondary_data:/data/db
-    networks:
-      - ualflix_network
-    command: mongod --replSet ualflix-replica-set --bind_ip_all --port 27018
-    depends_on:
-      ualflix_db_primary:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "mongosh", "--port", "27018", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-
-  # MongoDB Arbiter (Para decisões de failover)
-  ualflix_db_arbiter:
-    image: mongo:7.0
-    container_name: ualflix_mongo_arbiter
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongo_secondary_data:/data/db
+    command: ["mongod", "--replSet", "ualflix-replica-set", "--bind_ip_all"]
+    networks:
+      - ualflix_net
+
+  # MongoDB Arbiter
+  ualflix_db_arbiter:
+    image: mongo:5.0
+    container_name: ualflix_db_arbiter
     ports:
       - "27019:27019"
-    volumes:
-      - mongodb_arbiter_data:/data/db
-    networks:
-      - ualflix_network
-    command: mongod --replSet ualflix-replica-set --bind_ip_all --port 27019
-    depends_on:
-      ualflix_db_primary:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "mongosh", "--port", "27019", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-    restart: unless-stopped
-
-  # MongoDB Express - Interface Web
-  mongo_express:
-    image: mongo-express:latest
-    container_name: ualflix_mongo_express
     environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
-      ME_CONFIG_MONGODB_ADMINPASSWORD: password
-      ME_CONFIG_MONGODB_URL: mongodb://admin:password@ualflix_db_primary:27017/
-      ME_CONFIG_BASICAUTH_USERNAME: admin
-      ME_CONFIG_BASICAUTH_PASSWORD: admin
-    ports:
-      - "8081:8081"
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    command: ["mongod", "--replSet", "ualflix-replica-set", "--bind_ip_all"]
     networks:
-      - ualflix_network
-    depends_on:
-      ualflix_db_primary:
-        condition: service_healthy
-    restart: unless-stopped
+      - ualflix_net
 
-  # ================================================================
-  # MESSAGING QUEUE
-  # ================================================================
-  
+  # Replica Set Initializer
+  mongo_rs_initiator:
+    image: mongo:5.0
+    depends_on:
+      - ualflix_db_primary
+      - ualflix_db_secondary
+      - ualflix_db_arbiter
+    entrypoint: >
+      bash -c '
+      sleep 10;
+      echo "🌀 Iniciando Replica Set...";
+      mongo --host ualflix_db_primary:27017 --eval "
+        rs.initiate({
+          _id: 'ualflix-replica-set',
+          members: [
+            { _id: 0, host: 'ualflix_db_primary:27017' },
+            { _id: 1, host: 'ualflix_db_secondary:27018' },
+            { _id: 2, host: 'ualflix_db_arbiter:27019', arbiterOnly: true }
+          ]
+        });
+      ";
+      '
+    networks:
+      - ualflix_net
+
+  # RabbitMQ
   queue_service:
     image: rabbitmq:3-management
-    container_name: ualflix_queue
-    networks:
-      - ualflix_network
+    container_name: queue_service
     ports:
       - "5672:5672"
       - "15672:15672"
-      - "15692:15692"
     environment:
       - RABBITMQ_DEFAULT_USER=ualflix
       - RABBITMQ_DEFAULT_PASS=ualflix_password
-      - RABBITMQ_ENABLED_PLUGINS_FILE=/etc/rabbitmq/enabled_plugins
-    command: >
-      bash -c "
-        echo '[rabbitmq_management,rabbitmq_prometheus].' > /etc/rabbitmq/enabled_plugins &&
-        exec rabbitmq-server
-      "
-    healthcheck:
-      test: rabbitmq-diagnostics -q ping
-      interval: 30s
-      timeout: 30s
-      retries: 3
-    restart: unless-stopped
-
-  # ================================================================
-  # MICROSERVICES - MONGODB
-  # ================================================================
-
-  # Authentication Service
-  authentication_service:
-    build: 
-      context: ./authentication_service
-      dockerfile: Dockerfile
-    container_name: ualflix_auth
-    environment:
-      - SECRET_KEY=ualflix-secret-key-change-in-production
-      - MONGODB_PRIMARY_HOST=ualflix_db_primary
-      - MONGODB_PRIMARY_PORT=27017
-      - MONGODB_SECONDARY_HOST=ualflix_db_secondary
-      - MONGODB_SECONDARY_PORT=27018
-      - MONGODB_DATABASE=ualflix
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
-      - MONGODB_REPLICA_SET=ualflix-replica-set
     networks:
-      - ualflix_network
-    depends_on:
-      ualflix_db_primary:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
+      - ualflix_net
 
   # Catalog Service
   catalog_service:
-    build: 
+    build:
       context: ./catalog_service
-      dockerfile: Dockerfile
-    container_name: ualflix_catalog
+    container_name: catalog_service
+    ports:
+      - "8001:8000"
     environment:
+      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
       - QUEUE_PASSWORD=ualflix_password
       - AUTH_SERVICE_URL=http://authentication_service:8000
-      - MONGODB_PRIMARY_HOST=ualflix_db_primary
-      - MONGODB_PRIMARY_PORT=27017
-      - MONGODB_SECONDARY_HOST=ualflix_db_secondary
-      - MONGODB_SECONDARY_PORT=27018
-      - MONGODB_DATABASE=ualflix
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
-      - MONGODB_REPLICA_SET=ualflix-replica-set
-    networks:
-      - ualflix_network
     volumes:
-      - video_storage:/videos
+      - ./catalog_service/uploads:/videos
     depends_on:
-      ualflix_db_primary:
-        condition: service_healthy
-      queue_service:
-        condition: service_healthy
-      authentication_service:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  # Streaming Service
-  streaming_service:
-    build: ./streaming_service
-    container_name: ualflix_streaming
-    volumes:
-      - video_storage:/videos
-    networks:
-      - ualflix_network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  # Video Processor
-  video_processor:
-    build: 
-      context: ./video_processor
-      dockerfile: Dockerfile
-    container_name: ualflix_processor
-    environment:
-      - QUEUE_HOST=queue_service
-      - QUEUE_USER=ualflix
-      - QUEUE_PASSWORD=ualflix_password
-      - MONGODB_PRIMARY_HOST=ualflix_db_primary
-      - MONGODB_PRIMARY_PORT=27017
-      - MONGODB_SECONDARY_HOST=ualflix_db_secondary
-      - MONGODB_SECONDARY_PORT=27018
-      - MONGODB_DATABASE=ualflix
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
-      - MONGODB_REPLICA_SET=ualflix-replica-set
-    networks:
-      - ualflix_network
-    volumes:
-      - video_storage:/videos
-    depends_on:
-      queue_service:
-        condition: service_healthy
-      ualflix_db_primary:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # Admin Service - MongoDB
-  admin_service:
-    build: 
-      context: ./admin_service
-      dockerfile: Dockerfile
-    container_name: ualflix_admin
-    environment:
-      - MONGODB_PRIMARY_HOST=ualflix_db_primary
-      - MONGODB_PRIMARY_PORT=27017
-      - MONGODB_SECONDARY_HOST=ualflix_db_secondary
-      - MONGODB_SECONDARY_PORT=27018
-      - MONGODB_DATABASE=ualflix
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
-      - MONGODB_REPLICA_SET=ualflix-replica-set
-    networks:
-      - ualflix_network
-    depends_on:
-      - authentication_service
-      - catalog_service
-      - streaming_service
-      - video_processor
       - ualflix_db_primary
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  # ================================================================
-  # FRONTEND
-  # ================================================================
-
-  frontend:
-    build: ./frontend
-    container_name: ualflix_frontend
+      - queue_service
     networks:
-      - ualflix_network
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
+      - ualflix_net
 
-  # ================================================================
-  # LOAD BALANCER & PROXY
-  # ================================================================
-
-  # Nginx Reverse Proxy
-  nginx:
-    image: nginx:latest
-    container_name: ualflix_nginx
+  # Authentication Service
+  authentication_service:
+    build:
+      context: ./authentication_service
+    container_name: authentication_service
     ports:
-      - "8080:8080"
-    volumes:
-      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
-      - video_storage:/videos
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27018/?replicaSet=ualflix-replica-set&authSource=admin
     depends_on:
-      frontend:
-        condition: service_healthy
-      prometheus:
-        condition: service_healthy
-      grafana:
-        condition: service_healthy
+      - ualflix_db_primary
     networks:
-      - ualflix_network
-    restart: unless-stopped
+      - ualflix_net
 
-  # ================================================================
-  # MONITORING & METRICS (FUNCIONALIDADE 7)
-  # ================================================================
-
-  # Prometheus - Coleta de métricas
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: ualflix_prometheus
-    volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./monitoring/alert.rules:/etc/prometheus/alert.rules
-      - prometheus_data:/prometheus
+  # Frontend (React ou outro)
+  frontend:
+    build:
+      context: ./frontend
+    container_name: frontend
     ports:
-      - "9090:9090"
-    networks:
-      - ualflix_network
+      - "8080:80"
     depends_on:
       - catalog_service
-      - streaming_service
-      - video_processor
-      - admin_service
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
-      - '--query.max-concurrency=20'
-      - '--query.timeout=2m'
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:9090/-/healthy || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  # Grafana - Dashboards de métricas
-  grafana:
-    image: grafana/grafana:latest
-    container_name: ualflix_grafana
-    ports:
-      - "4000:4000"
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
     networks:
-      - ualflix_network
-    depends_on:
-      prometheus:
-        condition: service_healthy
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_SERVER_HTTP_PORT=4000
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:4000/api/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 3
-    restart: unless-stopped
-
-  # ================================================================
-  # MONGODB MONITORING
-  # ================================================================
-
-  # MongoDB Exporter para Prometheus
-  mongodb_exporter:
-    image: percona/mongodb_exporter:latest
-    container_name: ualflix_mongodb_exporter
-    environment:
-      - MONGODB_URI=mongodb://admin:password@ualflix_db_primary:27017/admin
-    ports:
-      - "9216:9216"
-    networks:
-      - ualflix_network
-    depends_on:
-      ualflix_db_primary:
-        condition: service_healthy
-    restart: unless-stopped
-
-# ================================================================
-# VOLUMES
-# ================================================================
-
-volumes:
-  # MongoDB volumes
-  mongodb_primary_data:
-    driver: local
-  mongodb_secondary_data:
-    driver: local
-  mongodb_arbiter_data:
-    driver: local
-  
-  # Application volumes
-  video_storage:
-    driver: local
-  
-  # Monitoring volumes
-  grafana_data:
-    driver: local
-  prometheus_data:
-    driver: local
-
-# ================================================================
-# NETWORKS
-# ================================================================
+      - ualflix_net
 
 networks:
-  ualflix_network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+  ualflix_net:
+
+volumes:
+  mongo_primary_data:
+  mongo_secondary_data:

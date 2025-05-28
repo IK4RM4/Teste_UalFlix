@@ -1,21 +1,26 @@
-FROM python:3.10
+# Base da imagem
+FROM python:3.11-slim
 
+# Diretório de trabalho
 WORKDIR /app
 
-COPY requirements.mongodb.txt requirements.txt
-RUN pip install -r requirements.txt
+# Instalar dependências do sistema
+RUN apt-get update && apt-get install -y \
+    netcat \
+    curl \
+ && rm -rf /var/lib/apt/lists/*
 
-# Instala netcat-openbsd para health checks
-RUN apt-get update && apt-get install -y netcat-openbsd curl && rm -rf /var/lib/apt/lists/*
-
+# Copiar ficheiros para dentro do container
 COPY . .
-COPY db_mongodb.py .
 
-# Expor porta
+# Permitir execução do wait-for-it.sh
+RUN chmod +x wait-for-it.sh
+
+# Instalar dependências Python
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Expõe a porta da API Flask
 EXPOSE 8000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
+# Comando default (vai ser substituído pelo entrypoint do docker-compose)
 CMD ["python", "app.py"]
