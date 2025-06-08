@@ -73,16 +73,9 @@ spec:
             port: 8000
           initialDelaySeconds: 45
           periodSeconds: 10
-          timeoutSeconds: 5
         readinessProbe:
           httpGet:
             path: /health
             port: 8000
           initialDelaySeconds: 15
           periodSeconds: 5
-          timeoutSeconds: 3
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: false
-          runAsNonRoot: true
-          runAsUser: 1000

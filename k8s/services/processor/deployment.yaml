@@ -1,4 +1,3 @@
-# PROCESSADOR DE VÍDEOS - Worker assíncrono
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,7 +8,7 @@ metadata:
     tier: worker
     component: processor
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: video-processor
@@ -24,18 +23,6 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
-      initContainers:
-      - name: wait-for-queue
-        image: curlimages/curl:latest
-        command: ['sh', '-c']
-        args:
-        - |
-          echo "Aguardando RabbitMQ..."
-          until curl -f http://rabbitmq-service:15672/api/overview; do
-            echo "RabbitMQ não está pronto..."
-            sleep 5
-          done
-          echo "RabbitMQ está pronto!"
       containers:
       - name: video-processor
         image: video_processor:latest
@@ -45,15 +32,9 @@ spec:
           name: http
         env:
         - name: QUEUE_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: QUEUE_HOST
+          value: "rabbitmq-service"
         - name: QUEUE_USER
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: QUEUE_USER
+          value: "ualflix"
         - name: QUEUE_PASSWORD
           valueFrom:
             secretKeyRef:

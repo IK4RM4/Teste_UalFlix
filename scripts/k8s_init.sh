@@ -33,11 +33,7 @@ minikube delete 2>/dev/null || true
 # Iniciar novo cluster
 minikube start \
     --driver=docker \
-    --nodes=3 \
-    --cpus=2 \
-    --memory=4096 \
-    --disk-size=20g \
-    --kubernetes-version=v1.28.0
+    --nodes=3 
 
 echo "✅ Cluster iniciado com 3 nós!"
 

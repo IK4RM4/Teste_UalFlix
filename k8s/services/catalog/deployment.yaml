@@ -12,8 +12,6 @@ spec:
   resources:
     requests:
       storage: 5Gi
-  storageClassName: standard
-
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,7 +23,7 @@ metadata:
     tier: backend
     component: api
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: catalog-service
@@ -52,17 +50,6 @@ spec:
             sleep 2
           done
           echo "MongoDB is ready!"
-      - name: wait-for-rabbitmq
-        image: curlimages/curl:latest
-        command: ['sh', '-c']
-        args:
-        - |
-          echo "Waiting for RabbitMQ..."
-          until curl -f http://rabbitmq-service:15672/api/overview >/dev/null 2>&1; do
-            echo "RabbitMQ not ready..."
-            sleep 5
-          done
-          echo "RabbitMQ is ready!"
       containers:
       - name: catalog-service
         image: catalog_service:latest
@@ -70,7 +57,6 @@ spec:
         ports:
         - containerPort: 8000
           name: http
-          protocol: TCP
         env:
         - name: MONGODB_CONNECTION_STRING
           value: "mongodb://admin:password@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
@@ -109,16 +95,12 @@ spec:
             port: 8000
           initialDelaySeconds: 45
           periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 8000
           initialDelaySeconds: 15
           periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
         volumeMounts:
         - name: video-storage
           mountPath: /videos
@@ -126,46 +108,3 @@ spec:
       - name: video-storage
         persistentVolumeClaim:
           claimName: video-storage-pvc
-      restartPolicy: Always
----
-# FUNCIONALIDADE 6: Auto-scaling baseado em CPU e Memória
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: catalog-service-hpa
-  namespace: ualflix
-  labels:
-    app: catalog-service
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: catalog-service
-  minReplicas: 2
-  maxReplicas: 8
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Percent
-        value: 50
-        periodSeconds: 60
-    scaleUp:
-      stabilizationWindowSeconds: 0
-      policies:
-      - type: Percent
-        value: 100
-        periodSeconds: 15
