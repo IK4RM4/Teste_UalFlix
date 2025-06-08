@@ -1,4 +1,3 @@
-# SERVIÇO DE AUTENTICAÇÃO com MongoDB
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,7 +8,7 @@ metadata:
     tier: backend
     component: authentication
 spec:
-  replicas: 2  # Redundância para serviço crítico
+  replicas: 2
   selector:
     matchLabels:
       app: auth-service
@@ -30,15 +29,15 @@ spec:
         command: ['sh', '-c']
         args:
         - |
-          until mongosh --host mongodb-service --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
-            echo "Aguardando MongoDB..."
+          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
+            echo "Waiting for MongoDB..."
             sleep 2
           done
-          echo "MongoDB pronto!"
+          echo "MongoDB ready!"
       containers:
       - name: auth-service
-        image: localhost:5000/authentication_service:latest
-        imagePullPolicy: IfNotPresent
+        image: authentication_service:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8000
           name: http
@@ -48,31 +47,19 @@ spec:
             secretKeyRef:
               name: app-secrets
               key: jwt-secret
-        - name: MONGODB_HOST
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_HOST
-        - name: MONGODB_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_PORT
+        - name: MONGODB_CONNECTION_STRING
+          value: "mongodb://admin:password@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
         - name: MONGODB_DATABASE
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_DATABASE
+          value: "ualflix"
         - name: MONGODB_USERNAME
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_USERNAME
+          value: "admin"
         - name: MONGODB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: mongodb-password
+        - name: MONGODB_REPLICA_SET
+          value: "ualflix-replica-set"
         resources:
           requests:
             memory: "128Mi"
@@ -84,9 +71,18 @@ spec:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 30
+          initialDelaySeconds: 45
+          periodSeconds: 10
+          timeoutSeconds: 5
         readinessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 10
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
