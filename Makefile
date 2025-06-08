@@ -69,15 +69,13 @@ docker-env: ## Configurar ambiente Docker do Minikube
 	@eval $$(minikube docker-env)
 	@echo "${GREEN}✅ Docker environment configurado!${NC}"
 
-build: docker-env ## Build de todas as imagens Docker
+build: ## Build de todas as imagens Docker
 	@echo "${BLUE}🏗️  Building Docker images...${NC}"
-	@eval $$(minikube docker-env) && \
-	docker build -t frontend:latest ./frontend/ && \
-	docker build -t authentication_service:latest ./authentication_service/ && \
-	docker build -t catalog_service:latest ./catalog_service/ && \
-	docker build -t streaming_service:latest ./streaming_service/ && \
-	docker build -t admin_service:latest ./admin_service/ && \
-	docker build -t video_processor:latest ./video_processor/
+	@for service in frontend authentication_service catalog_service streaming_service admin_service video_processor; do \
+		echo "Building $$service..."; \
+		docker build -t localhost:5000/$$service:latest ./$$service/; \
+		docker push localhost:5000/$$service:latest; \
+	done
 	@echo "${GREEN}✅ Todas as imagens foram construídas!${NC}"
 
 images: ## Listar imagens Docker no Minikube
@@ -88,7 +86,7 @@ images: ## Listar imagens Docker no Minikube
 # FUNCIONALIDADE 4: IMPLEMENTAÇÃO NA CLOUD (Kubernetes)
 # ========================================
 
-deploy: build ## Deploy completo da aplicação
+deploy: ## Deploy completo da aplicação
 	@echo "${BLUE}🚀 Iniciando deploy da aplicação UALFlix...${NC}"
 	@make deploy-namespace
 	@make deploy-secrets
@@ -300,6 +298,143 @@ restart-all: ## Reiniciar todos os deployments
 	@echo "${BLUE}🔄 Reiniciando todos os serviços...${NC}"
 	@kubectl rollout restart deployment --all -n $(NAMESPACE)
 
+# Adicionar estas regras ao Makefile existente
+
+# ========================================
+# CORREÇÃO PARA MULTI-NODE
+# ========================================
+
+setup-registry: ## Configurar registry para multi-node
+	@echo "${BLUE}📦 Configurando registry para cluster multi-nó...${NC}"
+	@minikube addons enable registry
+	@echo "Aguardando registry ficar pronto..."
+	@kubectl wait --for=condition=ready pod -l app=registry -n kube-system --timeout=120s || true
+	@echo "${GREEN}✅ Registry configurado!${NC}"
+
+start-registry-forward: ## Iniciar port-forward para registry
+	@echo "${BLUE}🔌 Iniciando port-forward para registry...${NC}"
+	@kubectl port-forward -n kube-system service/registry 5000:80 &
+	@sleep 3
+	@echo "${GREEN}✅ Registry disponível em localhost:5000${NC}"
+
+build-registry: setup-registry start-registry-forward ## Build para registry local (multi-node)
+	@echo "${BLUE}🏗️ Building imagens para registry local...${NC}"
+	@for service in frontend authentication_service catalog_service streaming_service admin_service video_processor; do \
+		echo "Building $$service..."; \
+		docker build -t $$service:latest ./$$service/; \
+		docker tag $$service:latest localhost:5000/$$service:latest; \
+		docker push localhost:5000/$$service:latest; \
+		echo "✅ $$service enviado para registry"; \
+	done
+	@echo "${GREEN}✅ Todas as imagens no registry local!${NC}"
+
+# Override do build original para detectar multi-node
+build: ## Build de todas as imagens Docker (detecta multi-node)
+	@NODE_COUNT=$$(kubectl get nodes --no-headers | wc -l); \
+	if [ $$NODE_COUNT -gt 1 ]; then \
+		echo "${YELLOW}⚠️ Cluster multi-nó detectado ($$NODE_COUNT nós)${NC}"; \
+		echo "${BLUE}Usando registry local...${NC}"; \
+		$(MAKE) build-registry; \
+	else \
+		echo "${BLUE}Cluster single-nó, usando docker-env...${NC}"; \
+		$(MAKE) docker-env; \
+		$(MAKE) build-local; \
+	fi
+
+build-local: docker-env ## Build local (apenas single-node)
+	@echo "${BLUE}🏗️ Building Docker images localmente...${NC}"
+	@eval $$(minikube docker-env) && \
+	for service in frontend authentication_service catalog_service streaming_service admin_service video_processor; do \
+		echo "Building $$service..."; \
+		docker build -t $$service:latest ./$$service/; \
+	done
+	@echo "${GREEN}✅ Todas as imagens foram construídas!${NC}"
+
+# Deploy com detecção automática
+deploy: ## Deploy automático (detecta single/multi-node)
+	@NODE_COUNT=$$(kubectl get nodes --no-headers | wc -l); \
+	if [ $$NODE_COUNT -gt 1 ]; then \
+		echo "${YELLOW}Deploy para cluster multi-nó ($$NODE_COUNT nós)${NC}"; \
+		$(MAKE) deploy-multinode; \
+	else \
+		echo "${BLUE}Deploy para cluster single-nó${NC}"; \
+		$(MAKE) deploy-standard; \
+	fi
+
+deploy-multinode: ## Deploy para multi-node com registry
+	@echo "${BLUE}🚀 Deploy para cluster multi-nó...${NC}"
+	@$(MAKE) deploy-namespace
+	@$(MAKE) deploy-secrets
+	@$(MAKE) deploy-database
+	@$(MAKE) deploy-messaging
+	@$(MAKE) deploy-services-registry
+	@$(MAKE) deploy-frontend-registry
+	@$(MAKE) deploy-gateway
+	@$(MAKE) deploy-monitoring
+	@echo "${GREEN}✅ Deploy multi-nó concluído!${NC}"
+
+deploy-services-registry: ## Deploy serviços usando registry
+	@echo "${YELLOW}🔧 Deploying services com registry local...${NC}"
+	@# Criar manifests temporários com registry
+	@mkdir -p tmp-manifests
+	@for service in auth catalog streaming admin processor; do \
+		if [ -f "k8s/services/$$service/deployment.yaml" ]; then \
+			sed 's|image: \([^:]*\):latest|image: localhost:5000/\1:latest|g' k8s/services/$$service/deployment.yaml > tmp-manifests/$$service-deployment.yaml; \
+			kubectl apply -f tmp-manifests/$$service-deployment.yaml; \
+			kubectl apply -f k8s/services/$$service/service.yaml; \
+		fi \
+	done
+	@rm -rf tmp-manifests
+
+deploy-frontend-registry: ## Deploy frontend usando registry
+	@echo "${YELLOW}⚛️ Deploying frontend com registry...${NC}"
+	@mkdir -p tmp-manifests
+	@sed 's|image: frontend:latest|image: localhost:5000/frontend:latest|g' k8s/frontend/deployment.yaml > tmp-manifests/frontend-deployment.yaml
+	@kubectl apply -f tmp-manifests/frontend-deployment.yaml
+	@kubectl apply -f k8s/frontend/service.yaml
+	@rm -rf tmp-manifests
+
+deploy-standard: deploy-namespace deploy-secrets deploy-database deploy-messaging deploy-services deploy-frontend deploy-gateway deploy-monitoring ## Deploy padrão
+
+# Converter cluster para single-node (se necessário)
+cluster-single: ## Converter para cluster single-node
+	@echo "${YELLOW}🔄 Convertendo para cluster single-node...${NC}"
+	@minikube delete
+	@minikube start \
+		--driver=docker \
+		--nodes=1 \
+		--cpus=$(CPUS) \
+		--memory=$(MEMORY) \
+		--disk-size=20g \
+		--kubernetes-version=v1.28.0
+	@$(MAKE) addons-enable
+	@echo "${GREEN}✅ Cluster single-node criado!${NC}"
+
+# Build usando Docker Hub (alternativa)
+build-dockerhub: ## Build e push para Docker Hub
+	@echo "${BLUE}🐳 Building e enviando para Docker Hub...${NC}"
+	@read -p "Docker Hub username: " username; \
+	for service in frontend authentication_service catalog_service streaming_service admin_service video_processor; do \
+		echo "Building $$service..."; \
+		docker build -t $$username/ualflix-$$service:latest ./$$service/; \
+		docker push $$username/ualflix-$$service:latest; \
+	done
+	@echo "${GREEN}✅ Imagens enviadas para Docker Hub!${NC}"
+
+# Verificar tipo de cluster
+cluster-info-extended: ## Informações detalhadas do cluster
+	@echo "${BLUE}📊 Informações do Cluster:${NC}"
+	@kubectl cluster-info
+	@echo "\n${BLUE}📋 Nós do Cluster:${NC}"
+	@kubectl get nodes -o wide
+	@NODE_COUNT=$$(kubectl get nodes --no-headers | wc -l); \
+	echo "\n${BLUE}Tipo de cluster:${NC}"; \
+	if [ $$NODE_COUNT -eq 1 ]; then \
+		echo "  🔸 Single-node ($$NODE_COUNT nó) - Use 'make build' normal"; \
+	else \
+		echo "  🔹 Multi-node ($$NODE_COUNT nós) - Use 'make build-registry'"; \
+	fi
+	
 # ========================================
 # FUNCIONALIDADES COMPLETAS
 # ========================================

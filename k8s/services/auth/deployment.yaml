@@ -37,8 +37,8 @@ spec:
           echo "MongoDB pronto!"
       containers:
       - name: auth-service
-        image: authentication_service:latest
-        imagePullPolicy: Never
+        image: localhost:5000/authentication_service:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
           name: http

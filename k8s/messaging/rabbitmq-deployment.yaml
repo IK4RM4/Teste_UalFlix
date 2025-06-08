@@ -10,6 +10,8 @@ metadata:
     component: queue
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: rabbitmq
@@ -41,6 +43,8 @@ spec:
               key: rabbitmq-password
         - name: RABBITMQ_ENABLED_PLUGINS_FILE
           value: "/etc/rabbitmq/enabled_plugins"
+        - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+          value: "-rabbit log_levels [{connection,error},{channel,error}]"
         command:
         - sh
         - -c
@@ -49,10 +53,10 @@ spec:
           rabbitmq-server
         resources:
           requests:
-            memory: "256Mi"
+            memory: "512Mi"
             cpu: "250m"
           limits:
-            memory: "512Mi"
+            memory: "1Gi"
             cpu: "500m"
         livenessProbe:
           exec:
@@ -60,13 +64,21 @@ spec:
             - rabbitmq-diagnostics
             - -q
             - ping
-          initialDelaySeconds: 60
+          initialDelaySeconds: 120
           periodSeconds: 30
+          timeoutSeconds: 10
         readinessProbe:
           exec:
             command:
             - rabbitmq-diagnostics
             - -q
             - check_port_connectivity
-          initialDelaySeconds: 30
+          initialDelaySeconds: 60
           periodSeconds: 10
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: rabbitmq-data
+          mountPath: /var/lib/rabbitmq
+      volumes:
+      - name: rabbitmq-data
+        emptyDir: {}
