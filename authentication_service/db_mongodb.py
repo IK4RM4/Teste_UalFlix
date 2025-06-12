@@ -33,56 +33,72 @@ class MongoDBManager:
             self._initialize_connection()
     
     def _initialize_connection(self):
-        """Inicializa conexões ao replica set"""
+        """Inicializa conexões ao replica set com fallback melhorado"""
         try:
-            # Connection string para replica set
-            connection_string = os.environ.get(
-                'MONGODB_CONNECTION_STRING',
-                'mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set'
-            )
+            # PRIMEIRA TENTATIVA: Conexão simples ao primary
+            logger.info("🔄 Tentando conexão simples ao MongoDB primary...")
+            simple_uri = "mongodb://ualflix_db_primary:27017/ualflix"
             
-            logger.info(f"Conectando ao replica set: {connection_string}")
+            self.client = MongoClient(simple_uri, serverSelectionTimeoutMS=5000)
+            self.write_client = self.client
+            self.read_client = self.client
             
-            # CONEXÃO PRINCIPAL
-            self.client = MongoClient(
-                connection_string,
-                serverSelectionTimeoutMS=15000,
-                connectTimeoutMS=15000,
-                retryWrites=True,
-                retryReads=True
-            )
+            # Testar conexão
+            self.client.admin.command('ping')
+            logger.info("✅ Conectado ao MongoDB em modo simples")
             
-            # CONEXÃO PARA ESCRITA (primary)
-            self.write_client = MongoClient(
-                connection_string,
-                serverSelectionTimeoutMS=15000,
-                connectTimeoutMS=15000,
-                readPreference=ReadPreference.PRIMARY,
-                retryWrites=True
-            )
-            
-            # CONEXÃO PARA LEITURA (secondary preferred)
-            self.read_client = MongoClient(
-                connection_string,
-                serverSelectionTimeoutMS=15000,
-                connectTimeoutMS=15000,
-                readPreference=ReadPreference.SECONDARY_PREFERRED,
-                retryReads=True
-            )
-            
-            # Testar conexões
-            self._test_connections()
-            
-            logger.info("✅ MongoDB Replica Set conectado!")
-            logger.info(f"   - Primary: {self._get_primary_host()}")
-            
-            # Setup inicial
             self._setup_database()
+            return
             
-        except Exception as e:
-            logger.error(f"❌ Erro ao conectar ao replica set: {e}")
-            self._fallback_to_simple_connection()
-    
+        except Exception as e1:
+            logger.warning(f"Conexão simples falhou: {e1}")
+            
+            try:
+                # SEGUNDA TENTATIVA: Replica set com timeout maior
+                logger.info("🔄 Tentando replica set com configurações relaxadas...")
+                connection_string = "mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017/ualflix?replicaSet=ualflix-replica-set&readPreference=primaryPreferred"
+                
+                self.client = MongoClient(
+                    connection_string,
+                    serverSelectionTimeoutMS=10000,
+                    connectTimeoutMS=10000,
+                    retryWrites=False,  # Desativar retry para debugging
+                    retryReads=False
+                )
+                
+                self.write_client = self.client
+                self.read_client = self.client
+                
+                # Testar conexão
+                self.client.admin.command('ping')
+                logger.info("✅ Conectado ao replica set")
+                
+                self._setup_database()
+                return
+                
+            except Exception as e2:
+                logger.warning(f"Replica set falhou: {e2}")
+                
+                try:
+                    # TERCEIRA TENTATIVA: Apenas o primary, sem replica set
+                    logger.info("🔄 Tentando apenas primary sem replica set...")
+                    fallback_uri = "mongodb://ualflix_db_primary:27017/ualflix?directConnection=true"
+                    
+                    self.client = MongoClient(fallback_uri, serverSelectionTimeoutMS=5000)
+                    self.write_client = self.client
+                    self.read_client = self.client
+                    
+                    # Testar conexão
+                    self.client.admin.command('ping')
+                    logger.info("✅ Conectado ao primary diretamente")
+                    
+                    self._setup_database()
+                    return
+                    
+                except Exception as e3:
+                    logger.error(f"❌ Todas as tentativas de conexão falharam: {e3}")
+                    raise Exception(f"Impossível conectar ao MongoDB: {e3}")
+                
     def _test_connections(self):
         """Testa todas as conexões"""
         self.client.admin.command('ping')
@@ -110,7 +126,7 @@ class MongoDBManager:
             raise
     
     def _setup_database(self):
-        """Setup da base de dados"""
+        """Setup da base de dados com admin correto"""
         try:
             db = self.get_write_database()
             
@@ -132,17 +148,68 @@ class MongoDBManager:
             except Exception as e:
                 logger.warning(f"Índices já existem: {e}")
             
-            # Utilizador admin
-            if not db.users.find_one({'username': 'admin'}):
+            # CORREÇÃO: Verificar e criar utilizador admin CORRETAMENTE
+            existing_admin = db.users.find_one({'username': 'admin'})
+            
+            if not existing_admin:
                 from werkzeug.security import generate_password_hash
-                db.users.insert_one({
+                
+                # Criar admin com senha 'admin'
+                admin_password_hash = generate_password_hash('admin', method='pbkdf2:sha256')
+                
+                admin_user = {
                     'username': 'admin',
                     'email': 'admin@ualflix.com',
-                    'password': generate_password_hash('admin'),
+                    'password': admin_password_hash,  # Hash correto da senha 'admin'
                     'is_admin': True,
-                    'created_at': datetime.utcnow()
-                })
-                logger.info("✅ Admin criado")
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                
+                result = db.users.insert_one(admin_user)
+                logger.info(f"✅ Admin criado com ID: {result.inserted_id}")
+                logger.info("📋 CREDENCIAIS: username=admin, password=admin")
+                
+            else:
+                # Se admin existe mas tem senha temporária, atualizar
+                if existing_admin.get('temp_password') or existing_admin.get('password') == 'admin_temp_will_be_hashed_by_app':
+                    from werkzeug.security import generate_password_hash
+                    
+                    admin_password_hash = generate_password_hash('admin', method='pbkdf2:sha256')
+                    
+                    db.users.update_one(
+                        {'username': 'admin'},
+                        {
+                            '$set': {
+                                'password': admin_password_hash,
+                                'is_admin': True,
+                                'updated_at': datetime.utcnow()
+                            },
+                            '$unset': {
+                                'temp_password': 1
+                            }
+                        }
+                    )
+                    logger.info("✅ Senha do admin atualizada para 'admin'")
+                else:
+                    # Garantir que é admin
+                    db.users.update_one(
+                        {'username': 'admin'},
+                        {
+                            '$set': {
+                                'is_admin': True,
+                                'updated_at': datetime.utcnow()
+                            }
+                        }
+                    )
+                    logger.info("✅ Admin já existe - verificado")
+            
+            # Verificação final
+            final_admin = db.users.find_one({'username': 'admin'})
+            if final_admin and final_admin.get('is_admin'):
+                logger.info("🎯 ADMIN PRONTO: username='admin', password='admin'")
+            else:
+                logger.error("❌ Problema na criação/verificação do admin")
             
         except Exception as e:
             logger.warning(f"Setup da BD: {e}")
