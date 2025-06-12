@@ -38,7 +38,7 @@ class MongoDBManager:
             # Connection string para replica set
             connection_string = os.environ.get(
                 'MONGODB_CONNECTION_STRING',
-                'mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin'
+                'mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set'
             )
             
             logger.info(f"Conectando ao replica set: {connection_string}")
@@ -94,7 +94,7 @@ class MongoDBManager:
         """Fallback para conexão simples"""
         logger.warning("⚠️ Tentando fallback para conexão simples...")
         try:
-            simple_uri = "mongodb://admin:password@ualflix_db_primary:27017/ualflix?authSource=admin"
+            simple_uri = "mongodb://ualflix_db_primary:27017/ualflix"
             
             self.client = MongoClient(simple_uri, serverSelectionTimeoutMS=10000)
             self.write_client = self.client

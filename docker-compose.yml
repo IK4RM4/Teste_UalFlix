@@ -7,13 +7,11 @@ services:
     ports:
       - "27017:27017"
     environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=password
       - MONGO_INITDB_DATABASE=ualflix
     volumes:
       - mongo_primary_data:/data/db
       - ./mongodb-setup:/docker-entrypoint-initdb.d/
-    command: mongod --replSet ualflix-replica-set --bind_ip_all
+    command: mongod --replSet ualflix-replica-set --bind_ip_all --noauth
     networks:
       - ualflix_net
     healthcheck:
@@ -30,12 +28,9 @@ services:
     restart: unless-stopped
     ports:
       - "27018:27017"
-    environment:
-      - MONGO_INITDB_ROOT_USERNAME=admin
-      - MONGO_INITDB_ROOT_PASSWORD=password
     volumes:
       - mongo_secondary_data:/data/db
-    command: mongod --replSet ualflix-replica-set --bind_ip_all
+    command: mongod --replSet ualflix-replica-set --bind_ip_all --noauth
     networks:
       - ualflix_net
     depends_on:
@@ -56,7 +51,7 @@ services:
       - "27019:27017"
     volumes:
       - mongo_arbiter_data:/data/db
-    command: mongod --replSet ualflix-replica-set --bind_ip_all
+    command: mongod --replSet ualflix-replica-set --bind_ip_all --noauth
     networks:
       - ualflix_net
     depends_on:
@@ -106,19 +101,7 @@ services:
         
         sleep(15000);
         
-        use admin;
-        try {
-          db.createUser({
-            user: 'admin',
-            pwd: 'password',
-            roles: [{ role: 'root', db: 'admin' }]
-          });
-          print('Utilizador admin criado');
-        } catch(e) {
-          print('Utilizador ja existe');
-        }
-        
-        use ualflix;
+        db = db.getSiblingDB('ualflix');
         db.createCollection('users');
         db.createCollection('videos');
         db.createCollection('video_views');
@@ -188,12 +171,10 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - MONGODB_CONNECTION_STRING=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_CONNECTION_STRING=mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
       - MONGODB_SECONDARY_HOST=ualflix_db_secondary
       - MONGODB_REPLICA_SET=ualflix-replica-set
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
       - SECRET_KEY=ualflix-secret-key
     depends_on:
@@ -216,12 +197,10 @@ services:
     ports:
       - "8001:8000"
     environment:
-      - MONGODB_CONNECTION_STRING=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_CONNECTION_STRING=mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
       - MONGODB_SECONDARY_HOST=ualflix_db_secondary
       - MONGODB_REPLICA_SET=ualflix-replica-set
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
@@ -253,12 +232,10 @@ services:
     ports:
       - "8002:8002"
     environment:
-      - MONGODB_CONNECTION_STRING=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_CONNECTION_STRING=mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set
       - MONGODB_PRIMARY_HOST=ualflix_db_primary
       - MONGODB_SECONDARY_HOST=ualflix_db_secondary
       - MONGODB_REPLICA_SET=ualflix-replica-set
-      - MONGODB_USERNAME=admin
-      - MONGODB_PASSWORD=password
       - MONGODB_DATABASE=ualflix
     depends_on:
       mongodb_replica_init:
@@ -282,7 +259,7 @@ services:
     ports:
       - "8004:8000"
     environment:
-      - MONGODB_CONNECTION_STRING=mongodb://admin:password@ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin
+      - MONGODB_CONNECTION_STRING=mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set
       - QUEUE_HOST=queue_service
       - QUEUE_USER=ualflix
       - QUEUE_PASSWORD=ualflix_password
