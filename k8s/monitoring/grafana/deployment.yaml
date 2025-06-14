@@ -1,4 +1,3 @@
-# GRAFANA DEPLOYMENT
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,6 +9,8 @@ metadata:
     component: visualization
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: grafana
@@ -20,12 +21,17 @@ spec:
         tier: monitoring
         component: visualization
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        fsGroup: 472
       containers:
       - name: grafana
         image: grafana/grafana:latest
         ports:
         - containerPort: 3000
           name: grafana
+          protocol: TCP
         env:
         - name: GF_SECURITY_ADMIN_USER
           value: "admin"
@@ -37,28 +43,54 @@ spec:
           value: "http://ualflix.local/grafana"
         - name: GF_SERVER_SERVE_FROM_SUB_PATH
           value: "true"
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-clock-panel,grafana-simple-json-datasource"
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
-            cpu: "250m"
-        volumeMounts:
-        - name: grafana-data
-          mountPath: /var/lib/grafana
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /api/health
             port: 3000
           initialDelaySeconds: 60
           periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /api/health
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 472
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: grafana-data
+          mountPath: /var/lib/grafana
+        - name: tmp-storage
+          mountPath: /tmp
       volumes:
       - name: grafana-data
         emptyDir: {}
+      - name: tmp-storage
+        emptyDir: {}reshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL

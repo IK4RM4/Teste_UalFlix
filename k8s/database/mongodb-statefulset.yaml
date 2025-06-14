@@ -2,10 +2,16 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mongodb
-  namespace: $(NAMESPACE)
+  namespace: ualflix
+  labels:
+    app: mongodb
+    tier: database
 spec:
-  serviceName: mongodb-service
+  serviceName: mongodb-headless
   replicas: 3
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
   selector:
     matchLabels:
       app: mongodb
@@ -13,7 +19,24 @@ spec:
     metadata:
       labels:
         app: mongodb
+        tier: database
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - mongodb
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        fsGroup: 999
+        runAsUser: 999
+        runAsNonRoot: true
       containers:
       - name: mongodb
         image: mongo:6.0
@@ -27,13 +50,30 @@ spec:
         - /etc/mongodb-keyfile/mongodb-keyfile
         ports:
         - containerPort: 27017
+          name: mongodb
         env:
         - name: MONGO_INITDB_ROOT_USERNAME
-          value: "admin"
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-username
         - name: MONGO_INITDB_ROOT_PASSWORD
-          value: "password"
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-root-password
         - name: MONGO_INITDB_DATABASE
-          value: "ualflix"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: MONGODB_DATABASE
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
         volumeMounts:
         - name: mongodb-data
           mountPath: /data/db
@@ -42,6 +82,7 @@ spec:
           readOnly: true
         - name: mongodb-config
           mountPath: /docker-entrypoint-initdb.d
+          readOnly: true
         readinessProbe:
           exec:
             command:
@@ -50,6 +91,8 @@ spec:
             - "db.adminCommand('ping')"
           initialDelaySeconds: 30
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
         livenessProbe:
           exec:
             command:
@@ -58,6 +101,8 @@ spec:
             - "db.adminCommand('ping')"
           initialDelaySeconds: 60
           periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
       volumes:
       - name: mongodb-keyfile
         secret:
@@ -71,19 +116,7 @@ spec:
       name: mongodb-data
     spec:
       accessModes: ["ReadWriteOnce"]
+      storageClassName: "standard"
       resources:
         requests:
           storage: 10Gi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mongodb-service
-  namespace: $(NAMESPACE)
-spec:
-  clusterIP: None
-  selector:
-    app: mongodb
-  ports:
-  - port: 27017
-    targetPort: 27017

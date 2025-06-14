@@ -9,6 +9,11 @@ metadata:
     component: streaming
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
   selector:
     matchLabels:
       app: streaming-service
@@ -23,13 +28,41 @@ spec:
         prometheus.io/port: "8001"
         prometheus.io/path: "/metrics"
     spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - streaming-service
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
       - name: streaming-service
-        image: streaming_service:latest
-        imagePullPolicy: Never
+        image: localhost:5000/streaming_service:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8001
           name: http
+          protocol: TCP
+        env:
+        - name: FLASK_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: FLASK_ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: LOG_LEVEL
         resources:
           requests:
             memory: "256Mi"
@@ -42,16 +75,34 @@ spec:
             path: /health
             port: 8001
           initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 8001
           initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
         volumeMounts:
         - name: video-storage
           mountPath: /videos
           readOnly: true
+        - name: tmp-storage
+          mountPath: /tmp
       volumes:
       - name: video-storage
         persistentVolumeClaim:
           claimName: video-storage-pvc
+      - name: tmp-storage
+        emptyDir: {}

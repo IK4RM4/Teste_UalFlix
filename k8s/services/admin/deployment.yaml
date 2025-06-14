@@ -8,7 +8,12 @@ metadata:
     tier: backend
     component: admin
 spec:
-  replicas: 1
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: admin-service
@@ -23,60 +28,123 @@ spec:
         prometheus.io/port: "8002"
         prometheus.io/path: "/metrics"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       initContainers:
       - name: wait-for-mongodb
         image: mongo:6.0
         command: ['sh', '-c']
         args:
         - |
-          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
-            echo "Waiting for MongoDB..."
-            sleep 2
+          echo "Aguardando MongoDB..."
+          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local --eval "rs.status()" >/dev/null 2>&1; do
+            echo "MongoDB não está pronto..."
+            sleep 5
           done
-          echo "MongoDB ready!"
+          echo "MongoDB está pronto!"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
       containers:
       - name: admin-service
-        image: admin_service:latest
-        imagePullPolicy: Never
+        image: localhost:5000/admin_service:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8002
           name: http
+          protocol: TCP
         env:
         - name: MONGODB_CONNECTION_STRING
-          value: "mongodb://admin:password@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
-        - name: MONGODB_DATABASE
-          value: "ualflix"
-        - name: MONGODB_USERNAME
-          value: "admin"
+          value: "mongodb://admin:$(MONGODB_PASSWORD)@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
         - name: MONGODB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: mongodb-password
+        - name: MONGODB_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: MONGODB_DATABASE
+        - name: MONGODB_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: MONGODB_USERNAME
         - name: MONGODB_REPLICA_SET
-          value: "ualflix-replica-set"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: MONGODB_REPLICA_SET
         - name: AUTH_SERVICE_URL
-          value: "http://auth-service:8000"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: AUTH_SERVICE_URL
         - name: CATALOG_SERVICE_URL
-          value: "http://catalog-service:8000"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: CATALOG_SERVICE_URL
         - name: STREAMING_SERVICE_URL
-          value: "http://streaming-service:8001"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: STREAMING_SERVICE_URL
+        - name: FLASK_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: FLASK_ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: LOG_LEVEL
         resources:
           requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
             memory: "256Mi"
-            cpu: "250m"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
         livenessProbe:
           httpGet:
             path: /health
             port: 8002
-          initialDelaySeconds: 45
+          initialDelaySeconds: 60
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 8002
-          initialDelaySeconds: 15
+          initialDelaySeconds: 30
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp-storage
+          mountPath: /tmp
+      volumes:
+      - name: tmp-storage
+        emptyDir: {}

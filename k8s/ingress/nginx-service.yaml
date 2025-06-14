@@ -1,5 +1,3 @@
-# k8s/ingress/nginx-service.yaml
-# FUNCIONALIDADE 6: Serviço Load Balancer Principal
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,7 +8,6 @@ metadata:
     tier: gateway
     component: load-balancer
   annotations:
-    # FUNCIONALIDADE 7: Métricas para monitoring
     prometheus.io/scrape: "true"
     prometheus.io/port: "8081"
     prometheus.io/path: "/nginx-status"
@@ -22,16 +19,16 @@ spec:
   - name: http
     port: 8080
     targetPort: 8080
-    nodePort: 30080  # Porta externa fixa para facilitar acesso
+    nodePort: 30080
     protocol: TCP
   - name: health
     port: 8081
     targetPort: 8081
-    nodePort: 30081  # Porta para health checks e métricas
+    nodePort: 30081
     protocol: TCP
-  sessionAffinity: None  # Permite load balancing real
+  sessionAffinity: None
+
 ---
-# Service adicional para acesso interno (ClusterIP)
 apiVersion: v1
 kind: Service
 metadata:

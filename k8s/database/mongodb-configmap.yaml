@@ -2,40 +2,92 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: mongodb-config
-  namespace: $(NAMESPACE)
+  namespace: ualflix
+  labels:
+    app: mongodb
+    component: config
 data:
   init-replica.js: |
-    print(" UALFlix - Inicializando MongoDB Replica Set no Kubernetes...");
+    print("UALFlix - Inicializando MongoDB Replica Set no Kubernetes...");
     sleep(10000);
     
     try {
         var config = {
             _id: "ualflix-replica-set",
             members: [
-                { _id: 0, host: "mongodb-0.mongodb-service.$(NAMESPACE).svc.cluster.local:27017", priority: 2 },
-                { _id: 1, host: "mongodb-1.mongodb-service.$(NAMESPACE).svc.cluster.local:27017", priority: 1 },
-                { _id: 2, host: "mongodb-2.mongodb-service.$(NAMESPACE).svc.cluster.local:27017", arbiterOnly: true }
+                { _id: 0, host: "mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017", priority: 3 },
+                { _id: 1, host: "mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017", priority: 2 },
+                { _id: 2, host: "mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017", priority: 1 }
             ]
         };
         
         var result = rs.initiate(config);
-        print("Resultado:", JSON.stringify(result));
+        print("Resultado da inicialização:", JSON.stringify(result));
         sleep(15000);
         
-        db = db.getSiblingDB('admin');
-        db.createUser({
-            user: "admin",
-            pwd: "password",
-            roles: [{ role: "root", db: "admin" }]
-        });
+        // Aguardar eleição do primary
+        var attempts = 0;
+        while (!rs.isMaster().ismaster && attempts < 30) {
+            sleep(2000);
+            attempts++;
+            print("Aguardando eleição do primary... tentativa", attempts);
+        }
         
-        db = db.getSiblingDB('ualflix');
-        db.createCollection('users');
-        db.createCollection('videos');
-        db.users.createIndex({ "username": 1 }, { unique: true });
-        
-        print("MongoDB Replica Set configurado!");
+        if (rs.isMaster().ismaster) {
+            print("Primary eleito, configurando base de dados...");
+            
+            // Criar utilizador admin
+            db = db.getSiblingDB('admin');
+            try {
+                db.createUser({
+                    user: "admin",
+                    pwd: "UALFlixSecurePassword2025",
+                    roles: [{ role: "root", db: "admin" }]
+                });
+                print("Utilizador admin criado");
+            } catch (e) {
+                print("Utilizador admin já existe ou erro:", e.message);
+            }
+            
+            // Configurar base de dados da aplicação
+            db = db.getSiblingDB('ualflix');
+            
+            // Criar coleções
+            db.createCollection('users');
+            db.createCollection('videos');
+            db.createCollection('video_views');
+            db.createCollection('replication_test');
+            
+            // Criar índices
+            db.users.createIndex({ "username": 1 }, { unique: true });
+            db.users.createIndex({ "email": 1 });
+            db.videos.createIndex({ "user_id": 1 });
+            db.videos.createIndex({ "status": 1 });
+            db.videos.createIndex({ "upload_date": 1 });
+            db.video_views.createIndex({ "video_id": 1 });
+            db.video_views.createIndex({ "user_id": 1 });
+            db.replication_test.createIndex({ "test_id": 1 });
+            
+            // Criar utilizador admin da aplicação
+            try {
+                db.users.insertOne({
+                    username: 'admin',
+                    email: 'admin@ualflix.com',
+                    password: 'pbkdf2:sha256:260000$UALFlix2025$AdminPasswordHashHere',
+                    is_admin: true,
+                    created_at: new Date(),
+                    updated_at: new Date()
+                });
+                print("Utilizador admin da aplicação criado");
+            } catch (e) {
+                print("Utilizador admin da aplicação já existe");
+            }
+            
+            print("MongoDB Replica Set configurado com sucesso!");
+        } else {
+            print("Erro: Primary não foi eleito após 60 segundos");
+        }
     } catch (error) {
-        print(" Erro:", error.message);
+        print("Erro na configuração:", error.message);
         throw error;
     }

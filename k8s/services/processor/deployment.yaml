@@ -9,6 +9,11 @@ metadata:
     component: processor
 spec:
   replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app: video-processor
@@ -23,34 +28,113 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      initContainers:
+      - name: wait-for-dependencies
+        image: mongo:6.0
+        command: ['sh', '-c']
+        args:
+        - |
+          echo "Aguardando RabbitMQ..."
+          until nc -z rabbitmq-service.ualflix.svc.cluster.local 5672; do
+            echo "RabbitMQ não está pronto..."
+            sleep 5
+          done
+          echo "RabbitMQ está pronto!"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
       containers:
       - name: video-processor
-        image: video_processor:latest
-        imagePullPolicy: Never
+        image: localhost:5000/video_processor:latest
+        imagePullPolicy: Always
         ports:
         - containerPort: 8000
           name: http
+          protocol: TCP
         env:
         - name: QUEUE_HOST
-          value: "rabbitmq-service"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: QUEUE_HOST
         - name: QUEUE_USER
-          value: "ualflix"
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: QUEUE_USER
         - name: QUEUE_PASSWORD
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: rabbitmq-password
+        - name: MONGODB_CONNECTION_STRING
+          value: "mongodb://admin:$(MONGODB_PASSWORD)@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-password
+        - name: FLASK_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: FLASK_ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: LOG_LEVEL
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
             memory: "512Mi"
-            cpu: "500m"
+            cpu: "300m"
+          limits:
+            memory: "1Gi"
+            cpu: "800m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+            - ALL
         volumeMounts:
         - name: video-storage
           mountPath: /videos
+        - name: tmp-storage
+          mountPath: /tmp
       volumes:
       - name: video-storage
         persistentVolumeClaim:
           claimName: video-storage-pvc
+      - name: tmp-storage
+        emptyDir: {}
