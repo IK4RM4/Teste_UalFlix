@@ -68,8 +68,8 @@ spec:
           allowPrivilegeEscalation: false
       containers:
       - name: admin-service
-        image: localhost:5000/admin_service:latest
-        imagePullPolicy: Always
+        image: admin_service:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8002
           name: http
