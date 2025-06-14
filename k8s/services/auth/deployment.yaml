@@ -47,11 +47,22 @@ spec:
       initContainers:
       - name: wait-for-mongodb
         image: mongo:6.0
+        env:
+        - name: MONGODB_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: MONGODB_USERNAME
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-password
         command: ['sh', '-c']
         args:
         - |
           echo "Aguardando MongoDB Replica Set..."
-          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local --eval "rs.status()" >/dev/null 2>&1; do
+          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local -u $MONGODB_USERNAME -p $MONGODB_PASSWORD --authenticationDatabase admin --eval "rs.status()" >/dev/null 2>&1; do
             echo "MongoDB Replica Set não está pronto, aguardando..."
             sleep 5
           done

@@ -102,28 +102,6 @@ data:
             listen 8080;
             server_name _;
             
-            # Security headers
-            add_header X-Frame-Options DENY;
-            add_header X-Content-Type-Options nosniff;
-            add_header X-XSS-Protection "1; mode=block";
-            
-            # CORS headers para desenvolvimento
-            add_header Access-Control-Allow-Origin "*" always;
-            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-            add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
-            add_header Access-Control-Expose-Headers "Content-Length,Content-Range" always;
-
-            # Handle preflight requests
-            if ($request_method = 'OPTIONS') {
-                add_header Access-Control-Allow-Origin "*";
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE";
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token";
-                add_header Access-Control-Max-Age 1728000;
-                add_header Content-Type "text/plain; charset=utf-8";
-                add_header Content-Length 0;
-                return 204;
-            }
-
             # Frontend (React app) - ROTA PRINCIPAL
             location / {
                 proxy_pass http://frontend_backend;
@@ -140,6 +118,17 @@ data:
                 proxy_connect_timeout 5s;
                 proxy_send_timeout 60s;
                 proxy_read_timeout 60s;
+
+                # Security headers
+                add_header X-Frame-Options DENY;
+                add_header X-Content-Type-Options nosniff;
+                add_header X-XSS-Protection "1; mode=block";
+                
+                # CORS headers para desenvolvimento
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
+                add_header Access-Control-Expose-Headers "Content-Length,Content-Range" always;
             }
 
             # Authentication API - FUNCIONALIDADE 6: Load Balancing
@@ -159,6 +148,11 @@ data:
                 proxy_connect_timeout 5s;
                 proxy_send_timeout 30s;
                 proxy_read_timeout 30s;
+
+                # CORS headers
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Admin API - FUNCIONALIDADE 7: Métricas
@@ -178,6 +172,11 @@ data:
                 proxy_connect_timeout 10s;
                 proxy_send_timeout 60s;
                 proxy_read_timeout 60s;
+
+                # CORS headers
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Upload API - Tratamento especial para uploads grandes
@@ -198,6 +197,11 @@ data:
                 proxy_send_timeout 300s;
                 proxy_read_timeout 300s;
                 proxy_request_buffering off;
+
+                # CORS headers
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Catalog API - FUNCIONALIDADE 6: Múltiplas réplicas
@@ -217,6 +221,11 @@ data:
                 proxy_connect_timeout 5s;
                 proxy_send_timeout 60s;
                 proxy_read_timeout 60s;
+
+                # CORS headers
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Streaming - FUNCIONALIDADE 6: Load balancing para streaming
@@ -239,6 +248,11 @@ data:
                 # Headers para streaming
                 add_header Accept-Ranges bytes;
                 add_header Cache-Control "public, max-age=3600";
+
+                # CORS headers
+                add_header Access-Control-Allow-Origin "*" always;
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Métricas do próprio NGINX
@@ -248,14 +262,6 @@ data:
                 allow 10.0.0.0/8;
                 allow 172.16.0.0/12;
                 allow 192.168.0.0/16;
-                deny all;
-            }
-
-            # Health check
-            location /health {
-                access_log off;
-                return 200 "NGINX Gateway healthy\n";
-                add_header Content-Type text/plain;
             }
         }
     }

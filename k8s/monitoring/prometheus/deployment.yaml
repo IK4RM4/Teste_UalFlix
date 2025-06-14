@@ -27,7 +27,7 @@ spec:
         fsGroup: 65534
       containers:
       - name: prometheus
-        image: prom/prometheus:latest
+        image: localhost:5000/prom/prometheus:latest
         ports:
         - containerPort: 9090
           name: prometheus

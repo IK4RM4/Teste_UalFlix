@@ -37,6 +37,16 @@ spec:
         fsGroup: 999
         runAsUser: 999
         runAsNonRoot: true
+      initContainers:
+      - name: fix-permissions
+        image: busybox
+        command: ["sh", "-c", "cp /etc/mongodb-keyfile/mongodb-keyfile /tmp/mongodb-keyfile && chmod 400 /tmp/mongodb-keyfile"]
+        volumeMounts:
+          - name: mongodb-keyfile
+            mountPath: /etc/mongodb-keyfile
+            readOnly: true
+          - name: tmp-keyfile
+            mountPath: /tmp
       containers:
       - name: mongodb
         image: mongo:6.0
@@ -77,7 +87,7 @@ spec:
         volumeMounts:
         - name: mongodb-data
           mountPath: /data/db
-        - name: mongodb-keyfile
+        - name: tmp-keyfile
           mountPath: /etc/mongodb-keyfile
           readOnly: true
         - name: mongodb-config
@@ -107,10 +117,11 @@ spec:
       - name: mongodb-keyfile
         secret:
           secretName: mongodb-keyfile
-          defaultMode: 0400
       - name: mongodb-config
         configMap:
           name: mongodb-config
+      - name: tmp-keyfile
+        emptyDir: {}
   volumeClaimTemplates:
   - metadata:
       name: mongodb-data

@@ -25,6 +25,17 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-username
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-root-password
         command:
         - /bin/bash
         - -c
@@ -34,7 +45,7 @@ spec:
           # Aguardar todos os pods do MongoDB estarem prontos
           for i in {0..2}; do
             echo "Verificando mongodb-$i..."
-            while ! mongosh --host mongodb-$i.mongodb-headless.ualflix.svc.cluster.local:27017 --eval "print('MongoDB $i ready')" --quiet; do
+            while ! mongosh --host mongodb-$i.mongodb-headless.ualflix.svc.cluster.local:27017 -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --eval "print('MongoDB $i ready')" --quiet; do
               echo "Aguardando mongodb-$i ficar disponível..."
               sleep 5
             done
@@ -44,7 +55,7 @@ spec:
           echo "Todos os pods MongoDB estão prontos. Inicializando Replica Set..."
           
           # Tentar inicializar o replica set no primeiro pod
-          mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017 --eval "
+          mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017 -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --eval "
           var config = {
             _id: 'ualflix-replica-set',
             members: [

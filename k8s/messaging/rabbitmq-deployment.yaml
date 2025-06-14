@@ -54,7 +54,7 @@ spec:
               name: app-secrets
               key: rabbitmq-password
         - name: RABBITMQ_ENABLED_PLUGINS_FILE
-          value: "/etc/rabbitmq/enabled_plugins"
+          value: "/tmp/enabled_plugins"
         - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
           value: "-rabbit log_levels [{connection,error},{channel,error}]"
         - name: RABBITMQ_PROMETHEUS_PLUGIN_ENABLED
@@ -63,7 +63,7 @@ spec:
         - sh
         - -c
         - |
-          echo '[rabbitmq_management,rabbitmq_prometheus].' > /etc/rabbitmq/enabled_plugins
+          echo '[rabbitmq_management,rabbitmq_prometheus].' > /tmp/enabled_plugins
           exec rabbitmq-server
         resources:
           requests:

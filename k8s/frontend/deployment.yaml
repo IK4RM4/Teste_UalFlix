@@ -42,8 +42,8 @@ spec:
         fsGroup: 1000
       containers:
       - name: frontend
-        image: localhost:5000/frontend:latest
-        imagePullPolicy: Always
+        image: frontend:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 3000
           name: http

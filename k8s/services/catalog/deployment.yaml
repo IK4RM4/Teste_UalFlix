@@ -1,4 +1,4 @@
-piVersion: v1
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: video-storage-pvc
@@ -64,11 +64,22 @@ spec:
       initContainers:
       - name: wait-for-dependencies
         image: mongo:6.0
+        env:
+        - name: MONGODB_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: app-config
+              key: MONGODB_USERNAME
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-password
         command: ['sh', '-c']
         args:
         - |
           echo "Aguardando MongoDB..."
-          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local --eval "rs.status()" >/dev/null 2>&1; do
+          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local -u $MONGODB_USERNAME -p $MONGODB_PASSWORD --authenticationDatabase admin --eval "rs.status()" >/dev/null 2>&1; do
             echo "MongoDB não está pronto..."
             sleep 5
           done
@@ -175,7 +186,7 @@ spec:
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
-          securityContext:
+        securityContext:
           runAsNonRoot: true
           runAsUser: 1000
           allowPrivilegeEscalation: false
@@ -193,4 +204,4 @@ spec:
         persistentVolumeClaim:
           claimName: video-storage-pvc
       - name: tmp-storage
-        emptyDir: {}
+        emptyDir: {} 

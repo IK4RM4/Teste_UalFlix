@@ -46,8 +46,8 @@ spec:
         fsGroup: 1000
       containers:
       - name: streaming-service
-        image: localhost:5000/streaming_service:latest
-        imagePullPolicy: Always
+        image: docker.io/library/streaming_service:latest
+        imagePullPolicy: Never
         ports:
         - containerPort: 8001
           name: http
