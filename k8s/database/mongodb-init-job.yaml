@@ -1,30 +1,22 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mongodb-replica-init
+  name: mongodb-init
   namespace: ualflix
   labels:
     app: mongodb
-    component: init
+    component: database
 spec:
-  ttlSecondsAfterFinished: 3600
-  backoffLimit: 3
   template:
     metadata:
       labels:
-        app: mongodb-init
+        app: mongodb
+        component: database
     spec:
       restartPolicy: OnFailure
       containers:
       - name: mongodb-init
         image: mongo:6.0
-        resources:
-          requests:
-            memory: "128Mi"
-            cpu: "100m"
-          limits:
-            memory: "256Mi"
-            cpu: "200m"
         env:
         - name: MONGO_INITDB_ROOT_USERNAME
           valueFrom:
@@ -36,129 +28,52 @@ spec:
             secretKeyRef:
               name: app-secrets
               key: mongodb-root-password
+        - name: MONGO_INITDB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-username
+        - name: MONGO_INITDB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: mongodb-password
         command:
-        - /bin/bash
+        - bash
         - -c
         - |
-          echo "Aguardando MongoDB pods estarem prontos..."
-          
-          # Aguardar todos os pods do MongoDB estarem prontos
-          for i in {0..2}; do
-            echo "Verificando mongodb-$i..."
-            while ! mongosh --host mongodb-$i.mongodb-headless.ualflix.svc.cluster.local:27017 -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --eval "print('MongoDB $i ready')" --quiet; do
-              echo "Aguardando mongodb-$i ficar disponível..."
-              sleep 5
-            done
-            echo "mongodb-$i está pronto!"
+          echo "Waiting for MongoDB instances..."
+          until mongo --host mongodb-0.mongodb-service.ualflix.svc.cluster.local:27017 --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+            echo "Waiting for MongoDB-0 to be ready..."
+            sleep 5
           done
           
-          echo "Todos os pods MongoDB estão prontos. Inicializando Replica Set..."
+          until mongo --host mongodb-1.mongodb-service.ualflix.svc.cluster.local:27017 --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+            echo "Waiting for MongoDB-1 to be ready..."
+            sleep 5
+          done
           
-          # Tentar inicializar o replica set no primeiro pod
-          mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017 -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --eval "
-          var config = {
-            _id: 'ualflix-replica-set',
-            members: [
-              { _id: 0, host: 'mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017', priority: 3 },
-              { _id: 1, host: 'mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017', priority: 2 },
-              { _id: 2, host: 'mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017', priority: 1 }
-            ]
-          };
+          until mongo --host mongodb-2.mongodb-service.ualflix.svc.cluster.local:27017 --eval "db.adminCommand('ping')" > /dev/null 2>&1; do
+            echo "Waiting for MongoDB-2 to be ready..."
+            sleep 5
+          done
           
-          try {
-            var result = rs.initiate(config);
-            print('Replica set inicializado:', JSON.stringify(result));
-          } catch(e) {
-            if (e.message.includes('already initialized')) {
-              print('Replica set já está inicializado');
-            } else {
-              print('Erro ao inicializar replica set:', e.message);
-              throw e;
-            }
-          }
+          echo "Initializing Replica Set..."
+          mongo --host mongodb-0.mongodb-service.ualflix.svc.cluster.local:27017 --eval "$(cat /scripts/init-replica.js)"
           
-          // Aguardar eleição do primary
-          print('Aguardando eleição do primary...');
-          var attempts = 0;
-          while (attempts < 60) {
-            try {
-              var status = rs.status();
-              var primary = status.members.find(m => m.state === 1);
-              if (primary) {
-                print('Primary eleito:', primary.name);
-                break;
-              }
-            } catch(e) {
-              print('Aguardando replica set ficar disponível...');
-            }
-            sleep(2000);
-            attempts++;
-          }
+          echo "Waiting for Replica Set to stabilize..."
+          sleep 30
           
-          if (attempts >= 60) {
-            throw new Error('Timeout aguardando eleição do primary');
-          }
+          echo "Creating users..."
+          mongo --host mongodb-0.mongodb-service.ualflix.svc.cluster.local:27017 --eval "$(cat /scripts/create-users.js)"
           
-          // Configurar utilizador admin
-          print('Configurando utilizador admin...');
-          db = db.getSiblingDB('admin');
-          try {
-            db.createUser({
-              user: 'admin',
-              pwd: 'UALFlixSecurePassword2025',
-              roles: [{ role: 'root', db: 'admin' }]
-            });
-            print('Utilizador admin criado com sucesso');
-          } catch(e) {
-            if (e.message.includes('already exists')) {
-              print('Utilizador admin já existe');
-            } else {
-              print('Erro ao criar utilizador admin:', e.message);
-            }
-          }
-          
-          // Configurar base de dados da aplicação
-          print('Configurando base de dados da aplicação...');
-          db = db.getSiblingDB('ualflix');
-          
-          // Criar coleções
-          print('Criando coleções...');
-          db.createCollection('users');
-          db.createCollection('videos');
-          db.createCollection('video_views');
-          db.createCollection('replication_test');
-          
-          // Criar índices
-          print('Criando índices...');
-          db.users.createIndex({ 'username': 1 }, { unique: true });
-          db.users.createIndex({ 'email': 1 });
-          db.videos.createIndex({ 'user_id': 1 });
-          db.videos.createIndex({ 'status': 1 });
-          db.videos.createIndex({ 'upload_date': 1 });
-          db.video_views.createIndex({ 'video_id': 1 });
-          db.video_views.createIndex({ 'user_id': 1 });
-          db.replication_test.createIndex({ 'test_id': 1 });
-          
-          // Criar utilizador admin da aplicação
-          print('Criando utilizador admin da aplicação...');
-          try {
-            db.users.insertOne({
-              username: 'admin',
-              email: 'admin@ualflix.com',
-              password: 'pbkdf2:sha256:260000\$UALFlix2025\$AdminPasswordHashHere',
-              is_admin: true,
-              created_at: new Date(),
-              updated_at: new Date()
-            });
-            print('Utilizador admin da aplicação criado');
-          } catch(e) {
-            if (e.message.includes('duplicate key')) {
-              print('Utilizador admin da aplicação já existe');
-            } else {
-              print('Erro ao criar utilizador admin da aplicação:', e.message);
-            }
-          }
-          
-          print('MongoDB Replica Set inicializado com sucesso!');
-          print('Credenciais: admin/admin');
-          " --quiet
+          echo "MongoDB initialization completed!"
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+      - name: scripts
+        configMap:
+          name: mongodb-config
+
+---

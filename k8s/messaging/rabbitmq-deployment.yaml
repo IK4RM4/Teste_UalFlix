@@ -1,3 +1,4 @@
+# RABBITMQ - Message Queue para processamento assíncrono
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,12 +6,9 @@ metadata:
   namespace: ualflix
   labels:
     app: rabbitmq
-    tier: messaging
-    component: queue
+    component: messaging
 spec:
-  replicas: 2
-  strategy:
-    type: Recreate
+  replicas: 1
   selector:
     matchLabels:
       app: rabbitmq
@@ -18,53 +16,24 @@ spec:
     metadata:
       labels:
         app: rabbitmq
-        tier: messaging
-        component: queue
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "15692"
-        prometheus.io/path: "/metrics"
+        component: messaging
     spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        fsGroup: 999
       containers:
       - name: rabbitmq
         image: rabbitmq:3-management
         ports:
         - containerPort: 5672
           name: amqp
-          protocol: TCP
         - containerPort: 15672
           name: management
-          protocol: TCP
-        - containerPort: 15692
-          name: prometheus
-          protocol: TCP
         env:
         - name: RABBITMQ_DEFAULT_USER
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: QUEUE_USER
+          value: "ualflix"
         - name: RABBITMQ_DEFAULT_PASS
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: rabbitmq-password
-        - name: RABBITMQ_ENABLED_PLUGINS_FILE
-          value: "/tmp/enabled_plugins"
-        - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
-          value: "-rabbit log_levels [{connection,error},{channel,error}]"
-        - name: RABBITMQ_PROMETHEUS_PLUGIN_ENABLED
-          value: "true"
-        command:
-        - sh
-        - -c
-        - |
-          echo '[rabbitmq_management,rabbitmq_prometheus].' > /tmp/enabled_plugins
-          exec rabbitmq-server
         resources:
           requests:
             memory: "512Mi"
@@ -72,41 +41,30 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
+        readinessProbe:
+          exec:
+            command:
+            - rabbitmq-diagnostics
+            - -q
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         livenessProbe:
           exec:
             command:
             - rabbitmq-diagnostics
             - -q
             - ping
-          initialDelaySeconds: 120
-          periodSeconds: 30
-          timeoutSeconds: 10
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-            - rabbitmq-diagnostics
-            - -q
-            - check_port_connectivity
           initialDelaySeconds: 60
-          periodSeconds: 10
+          periodSeconds: 30
           timeoutSeconds: 5
           failureThreshold: 3
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 999
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: false
-          capabilities:
-            drop:
-            - ALL
         volumeMounts:
         - name: rabbitmq-data
           mountPath: /var/lib/rabbitmq
-        - name: tmp-storage
-          mountPath: /tmp
       volumes:
       - name: rabbitmq-data
-        emptyDir: {}
-      - name: tmp-storage
-        emptyDir: {}
+        persistentVolumeClaim:
+          claimName: rabbitmq-data

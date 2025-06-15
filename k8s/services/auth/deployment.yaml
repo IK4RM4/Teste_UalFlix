@@ -9,11 +9,6 @@ metadata:
     component: authentication
 spec:
   replicas: 2
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
-      maxSurge: 1
   selector:
     matchLabels:
       app: auth-service
@@ -28,64 +23,24 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchExpressions:
-                - key: app
-                  operator: In
-                  values:
-                  - auth-service
-              topologyKey: kubernetes.io/hostname
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
       initContainers:
       - name: wait-for-mongodb
         image: mongo:6.0
-        env:
-        - name: MONGODB_USERNAME
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_USERNAME
-        - name: MONGODB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: app-secrets
-              key: mongodb-password
         command: ['sh', '-c']
         args:
         - |
-          echo "Aguardando MongoDB Replica Set..."
-          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local -u $MONGODB_USERNAME -p $MONGODB_PASSWORD --authenticationDatabase admin --eval "rs.status()" >/dev/null 2>&1; do
-            echo "MongoDB Replica Set não está pronto, aguardando..."
-            sleep 5
+          until mongosh --host mongodb-0.mongodb-headless.ualflix.svc.cluster.local --eval "db.adminCommand('ping')" >/dev/null 2>&1; do
+            echo "Waiting for MongoDB..."
+            sleep 2
           done
-          echo "MongoDB Replica Set está pronto!"
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
-            cpu: "100m"
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
-          allowPrivilegeEscalation: false
+          echo "MongoDB ready!"
       containers:
       - name: auth-service
-        image: localhost:5000/authentication_service:latest
-        imagePullPolicy: Always
+        image: localhost:5000/ualflix-authentication_service:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8000
           name: http
-          protocol: TCP
         env:
         - name: SECRET_KEY
           valueFrom:
@@ -93,76 +48,34 @@ spec:
               name: app-secrets
               key: jwt-secret
         - name: MONGODB_CONNECTION_STRING
-          value: "mongodb://admin:$(MONGODB_PASSWORD)@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
+          value: "mongodb://admin:password@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin"
+        - name: MONGODB_DATABASE
+          value: "ualflix"
+        - name: MONGODB_USERNAME
+          value: "admin"
         - name: MONGODB_PASSWORD
           valueFrom:
             secretKeyRef:
               name: app-secrets
               key: mongodb-password
-        - name: MONGODB_DATABASE
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_DATABASE
-        - name: MONGODB_USERNAME
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_USERNAME
         - name: MONGODB_REPLICA_SET
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: MONGODB_REPLICA_SET
-        - name: FLASK_ENV
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: FLASK_ENV
-        - name: LOG_LEVEL
-          valueFrom:
-            configMapKeyRef:
-              name: app-config
-              key: LOG_LEVEL
+          value: "ualflix-replica-set"
         resources:
           requests:
-            memory: "256Mi"
-            cpu: "200m"
+            memory: "128Mi"
+            cpu: "100m"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "256Mi"
+            cpu: "250m"
         livenessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 60
+          initialDelaySeconds: 45
           periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /health
             port: 8000
-          initialDelaySeconds: 30
+          initialDelaySeconds: 15
           periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
-        securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: false
-          capabilities:
-            drop:
-            - ALL
-        volumeMounts:
-        - name: video-storage
-          mountPath: /videos
-        - name: tmp-storage
-          mountPath: /tmp
-      volumes:
-      - name: video-storage
-        persistentVolumeClaim:
-          claimName: video-storage-pvc
-      - name: tmp-storage
-        emptyDir: {}

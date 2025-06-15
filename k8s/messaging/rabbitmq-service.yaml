@@ -2,20 +2,30 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: rabbitmq-service
+  name: rabbitmq
   namespace: ualflix
   labels:
     app: rabbitmq
+    component: messaging
 spec:
-  selector:
-    app: rabbitmq
   ports:
   - port: 5672
     targetPort: 5672
-    protocol: TCP
     name: amqp
   - port: 15672
     targetPort: 15672
-    protocol: TCP
     name: management
-  type: ClusterIP
+  selector:
+    app: rabbitmq
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rabbitmq-data
+  namespace: ualflix
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi

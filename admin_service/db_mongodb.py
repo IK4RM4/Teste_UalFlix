@@ -70,7 +70,7 @@ class MongoDBManager:
         logger.info("Tentando conexão single node ao primary...")
         
         try:
-            primary_uri = "mongodb://admin:UALFlixSecurePassword2025@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?authSource=admin"
+            primary_uri = "mongodb://ualflix_db_primary:27017/ualflix"
             
             self.client = MongoClient(
                 primary_uri,
@@ -105,7 +105,7 @@ class MongoDBManager:
         try:
             connection_string = os.environ.get(
                 'MONGODB_CONNECTION_STRING',
-                'mongodb://admin:UALFlixSecurePassword2025@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-1.mongodb-headless.ualflix.svc.cluster.local:27017,mongodb-2.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?replicaSet=ualflix-replica-set&authSource=admin'
+                'mongodb://ualflix_db_primary:27017,ualflix_db_secondary:27017,ualflix_db_arbiter:27017/ualflix?replicaSet=ualflix-replica-set'
             )
             
             # Cliente principal
@@ -155,7 +155,7 @@ class MongoDBManager:
         logger.info("Tentando conexão simples ao primary...")
         
         try:
-            primary_uri = "mongodb://admin:UALFlixSecurePassword2025@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017/ualflix?authSource=admin"
+            primary_uri = "mongodb://ualflix_db_primary:27017/ualflix"
             
             self.client = MongoClient(
                 primary_uri,
@@ -183,7 +183,7 @@ class MongoDBManager:
         logger.info("Tentando conexão básica...")
         
         try:
-            basic_uri = "mongodb://admin:UALFlixSecurePassword2025@mongodb-0.mongodb-headless.ualflix.svc.cluster.local:27017?authSource=admin"
+            basic_uri = "mongodb://ualflix_db_primary:27017"
             
             self.client = MongoClient(
                 basic_uri,

@@ -9,3 +9,6 @@ metadata:
     project: ualflix
     environment: development
     cluster.architecture: multi-node
+  annotations:
+    description: "Namespace for UalFlix streaming platform"
+    owner: "UalFlix Team"

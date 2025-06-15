@@ -57,7 +57,7 @@ data:
         # Upstream definitions para load balancing
         upstream frontend_backend {
             least_conn;
-            server frontend-service.ualflix.svc.cluster.local:3000 max_fails=3 fail_timeout=30s;
+            server frontend.ualflix.svc.cluster.local:80 max_fails=3 fail_timeout=30s;
             keepalive 32;
         }
 
@@ -90,7 +90,7 @@ data:
             listen 8081;
             server_name localhost;
             
-            location /nginx-health {
+            location /health {
                 access_log off;
                 return 200 "healthy\n";
                 add_header Content-Type text/plain;
@@ -102,6 +102,28 @@ data:
             listen 8080;
             server_name _;
             
+            # Security headers
+            add_header X-Frame-Options DENY;
+            add_header X-Content-Type-Options nosniff;
+            add_header X-XSS-Protection "1; mode=block";
+            
+            # CORS headers para desenvolvimento
+            add_header Access-Control-Allow-Origin "*" always;
+            add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
+            add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
+            add_header Access-Control-Expose-Headers "Content-Length,Content-Range" always;
+
+            # Handle preflight requests
+            if ($request_method = 'OPTIONS') {
+                add_header Access-Control-Allow-Origin "*";
+                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE";
+                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token";
+                add_header Access-Control-Max-Age 1728000;
+                add_header Content-Type "text/plain; charset=utf-8";
+                add_header Content-Length 0;
+                return 204;
+            }
+
             # Frontend (React app) - ROTA PRINCIPAL
             location / {
                 proxy_pass http://frontend_backend;
@@ -118,17 +140,6 @@ data:
                 proxy_connect_timeout 5s;
                 proxy_send_timeout 60s;
                 proxy_read_timeout 60s;
-
-                # Security headers
-                add_header X-Frame-Options DENY;
-                add_header X-Content-Type-Options nosniff;
-                add_header X-XSS-Protection "1; mode=block";
-                
-                # CORS headers para desenvolvimento
-                add_header Access-Control-Allow-Origin "*" always;
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
-                add_header Access-Control-Expose-Headers "Content-Length,Content-Range" always;
             }
 
             # Authentication API - FUNCIONALIDADE 6: Load Balancing
@@ -148,11 +159,6 @@ data:
                 proxy_connect_timeout 5s;
                 proxy_send_timeout 30s;
                 proxy_read_timeout 30s;
-
-                # CORS headers
-                add_header Access-Control-Allow-Origin "*" always;
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Admin API - FUNCIONALIDADE 7: Métricas
@@ -172,11 +178,6 @@ data:
                 proxy_connect_timeout 10s;
                 proxy_send_timeout 60s;
                 proxy_read_timeout 60s;
-
-                # CORS headers
-                add_header Access-Control-Allow-Origin "*" always;
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Upload API - Tratamento especial para uploads grandes
@@ -197,11 +198,6 @@ data:
                 proxy_send_timeout 300s;
                 proxy_read_timeout 300s;
                 proxy_request_buffering off;
-
-                # CORS headers
-                add_header Access-Control-Allow-Origin "*" always;
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Catalog API - FUNCIONALIDADE 6: Múltiplas réplicas
@@ -221,11 +217,6 @@ data:
                 proxy_connect_timeout 5s;
                 proxy_send_timeout 60s;
                 proxy_read_timeout 60s;
-
-                # CORS headers
-                add_header Access-Control-Allow-Origin "*" always;
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Streaming - FUNCIONALIDADE 6: Load balancing para streaming
@@ -248,11 +239,6 @@ data:
                 # Headers para streaming
                 add_header Accept-Ranges bytes;
                 add_header Cache-Control "public, max-age=3600";
-
-                # CORS headers
-                add_header Access-Control-Allow-Origin "*" always;
-                add_header Access-Control-Allow-Methods "GET, POST, OPTIONS, PUT, DELETE" always;
-                add_header Access-Control-Allow-Headers "DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization,X-Session-Token" always;
             }
 
             # Métricas do próprio NGINX
@@ -262,6 +248,70 @@ data:
                 allow 10.0.0.0/8;
                 allow 172.16.0.0/12;
                 allow 192.168.0.0/16;
+                deny all;
             }
         }
     }
+
+  proxy-connect-timeout: "3600"
+  proxy-read-timeout: "3600"
+  proxy-send-timeout: "3600"
+  proxy-body-size: "50m"
+  client-max-body-size: "50m"
+  keep-alive-requests: "10000"
+  keep-alive-timeout: "3600"
+  upstream-keepalive-connections: "1000"
+  upstream-keepalive-requests: "10000"
+  upstream-keepalive-timeout: "3600"
+  ssl-protocols: "TLSv1.2 TLSv1.3"
+  ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384"
+  ssl-early-data: "true"
+  use-forwarded-headers: "true"
+  compute-full-forwarded-for: "true"
+  use-proxy-protocol: "false"
+  enable-real-ip: "true"
+  real-ip-header: "X-Forwarded-For"
+  real-ip-recursive: "true"
+  server-tokens: "false"
+  server-name-hash-bucket-size: "128"
+  server-name-hash-max-size: "1024"
+  large-client-header-buffers: "4 8k"
+  client-header-buffer-size: "1k"
+  client-header-timeout: "60"
+  client-body-buffer-size: "128k"
+  client-body-timeout: "60"
+  send-timeout: "60"
+  proxy-buffer-size: "8k"
+  proxy-buffers-number: "4"
+  proxy-buffers: "4 8k"
+  proxy-busy-buffers-size: "8k"
+  proxy-max-temp-file-size: "2048m"
+  proxy-temp-file-write-size: "8k"
+  proxy-temp-path: "/tmp/proxy_temp"
+  fastcgi-buffer-size: "8k"
+  fastcgi-buffers: "4 8k"
+  fastcgi-busy-buffers-size: "8k"
+  fastcgi-max-temp-file-size: "2048m"
+  fastcgi-temp-file-write-size: "8k"
+  fastcgi-temp-path: "/tmp/fastcgi_temp"
+  uwsgi-buffer-size: "8k"
+  uwsgi-buffers: "4 8k"
+  uwsgi-busy-buffers-size: "8k"
+  uwsgi-max-temp-file-size: "2048m"
+  uwsgi-temp-file-write-size: "8k"
+  uwsgi-temp-path: "/tmp/uwsgi_temp"
+  scgi-buffer-size: "8k"
+  scgi-buffers: "4 8k"
+  scgi-busy-buffers-size: "8k"
+  scgi-max-temp-file-size: "2048m"
+  scgi-temp-file-write-size: "8k"
+  scgi-temp-path: "/tmp/scgi_temp"
+  gzip: "on"
+  gzip-types: "application/javascript application/json application/xml application/xml+rss text/css text/javascript text/plain text/xml"
+  gzip-min-length: "1000"
+  gzip-proxied: "any"
+  gzip-vary: "on"
+  gzip-comp-level: "6"
+  gzip-buffers: "16 8k"
+  gzip-http-version: "1.1"
+  gzip-disable: "MSIE [1-6]."

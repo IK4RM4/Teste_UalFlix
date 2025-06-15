@@ -6,7 +6,7 @@ metadata:
   namespace: ualflix
   labels:
     app: mongodb
-    tier: database
+    component: database
 spec:
   clusterIP: None
   selector:
@@ -14,7 +14,6 @@ spec:
   ports:
   - port: 27017
     targetPort: 27017
-    protocol: TCP
     name: mongodb
 ---
 # Regular service for stable access to MongoDB primary
@@ -25,14 +24,15 @@ metadata:
   namespace: ualflix
   labels:
     app: mongodb
-    tier: database
+    component: database
+  annotations:
+    description: "MongoDB Replica Set Service"
 spec:
   selector:
     app: mongodb
   ports:
   - port: 27017
     targetPort: 27017
-    protocol: TCP
     name: mongodb
   type: ClusterIP
   # Use the first pod (primary) by default
