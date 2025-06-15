@@ -7,16 +7,17 @@ echo "🚀 SUBINDO UALFLIX NO KUBERNETES"
 
 # 1. INICIAR CLUSTER (se não estiver rodando)
 echo "▶️ Verificando cluster..."
-minikube start --nodes=3 || echo "Cluster já está rodando"
+minikube start --nodes=3 --driver=docker || echo "Cluster já está rodando"
 
 # 2. HABILITAR REGISTRY
 echo "▶️ Habilitando registry..."
-minikube addons enable registry
+# minikube addons enable registry
+kubectl create namespace ualflix
 minikube addons enable ingress
 
 # 3. CONFIGURAR REGISTRY
 echo "▶️ Configurando registry..."
-kubectl port-forward -n kube-system service/registry 5000:80 &
+kubectl port-forward -n kube-system service/registry 5000:8080 &
 sleep 10
 
 # 4. BUILD E PUSH IMAGENS
